@@ -11,9 +11,3 @@ __pycache__/
 
 # The paper's PDF is copyrighted; do not commit a copy.
 *.pdf
-
-# Diagnostics outputs: left out until the full run is finished and written up.
-# Delete these three lines when adding the diagnostics results.
-diagnostics.csv
-perplexity_gentle.png
-error_vs_perplexity.png

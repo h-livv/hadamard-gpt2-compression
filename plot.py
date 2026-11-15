@@ -52,8 +52,8 @@ def plot_perplexity(table, baseline, filename):
     fig, ax = plt.subplots(figsize=(7, 4.5))
 
     ax.axhline(baseline, color="#52514e", linewidth=1, linestyle="--")
-    ax.annotate(f"uncompressed: {baseline:.1f}", xy=(1, baseline), xycoords=("axes fraction", "data"),
-                xytext=(-4, 4), textcoords="offset points", ha="right", color="#52514e")
+    ax.annotate(f"uncompressed: {baseline:.1f}", xy=(0, baseline), xycoords=("axes fraction", "data"),
+                xytext=(4, 4), textcoords="offset points", ha="left", color="#52514e")
 
     for method in ["svd", "hadamard"]:
         ranks = sorted(r for (name, r) in table if name == method)

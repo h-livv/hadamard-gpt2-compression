@@ -62,14 +62,15 @@ pip install -r requirements.txt
 
 python checks.py          # 8 correctness checks, a few seconds, must end with "All checks passed."
 python compress_gpt2.py   # main experiment, r = 8..64     -> results.csv, spectra.npz
-python plot.py            # figures                        -> perplexity.png, spectra.png
+python diagnostics.py     # diagnostics, r = 64..256       -> diagnostics.csv
+python plot.py            # figures                        -> *.png
 ```
 
 GPT-2 small and WikiText-2 are downloaded from the Hugging Face Hub on first use. They are not part of this repository.
 
-On the laptop GPU used for the results below (RTX 4050), `compress_gpt2.py` takes about 11 minutes: about 3 s per HadNet fit (96 fits) and about 35 s per perplexity evaluation (9 evaluations).
+On the laptop GPU used for the results below (RTX 4050), `compress_gpt2.py` takes about 11 minutes: about 3 s per HadNet fit (96 fits) and about 35 s per perplexity evaluation (9 evaluations). `diagnostics.py` takes about 75 minutes; it makes 104 perplexity evaluations.
 
-To change ranks, methods or layers, edit the constants at the top of `compress_gpt2.py`. There are no command-line options.
+To change ranks, methods or layers, edit the constants at the top of `compress_gpt2.py` or `diagnostics.py`. There are no command-line options.
 
 ## What each file does
 
@@ -78,11 +79,12 @@ To change ranks, methods or layers, edit the constants at the top of `compress_g
 | `hadamard.py` | The maths on one matrix: `svd_init`, `hadnet_fit`, `reconstruct`, `svd_truncate`. |
 | `checks.py` | Eight correctness checks (Khatri–Rao identity, rank bound, exact SVD init, Eckart–Young, parameter count, spectrum dependence, output-error identity, Spearman). |
 | `compress_gpt2.py` | Loads GPT-2 small, compresses the 24 MLP matrices for each method and rank, measures perplexity, writes `results.csv` and `spectra.npz`. |
-| `diagnostics.py` | Bug check, gentler budgets, output-error and entrywise-error measurements; writes `diagnostics.csv` (not in the repository yet). See "Diagnostics" below. |
-| `plot.py` | Draws `perplexity.png` and `spectra.png`, and the two diagnostic figures once `diagnostics.csv` exists. |
+| `diagnostics.py` | Bug check, gentler budgets, output-error and entrywise-error measurements; writes `diagnostics.csv` See "Diagnostics" below. |
+| `plot.py` | Draws `perplexity.png` and `spectra.png`, and from `diagnostics.csv` also `perplexity_gentle.png` and `error_vs_perplexity.png`. |
 | `VERIFICATION.md` | One row per function: where it comes from (paper section or URL) and how it differs from the source. |
 | `requirements.txt` | torch, transformers, datasets, numpy, matplotlib, with the versions used. |
 | `results.csv` | Output of `compress_gpt2.py`. One row per compressed matrix (method, r, layer, matrix, stored numbers, relative Frobenius error, fit time) with the run's perplexity repeated on each row; plus one baseline row. |
+| `diagnostics.csv` | Output of `diagnostics.py`. One row per compressed matrix: weight error, output error, entrywise statistics, perplexity with that matrix alone compressed (r = 64, 128), perplexity with all 24 compressed. |
 | `spectra.npz` | Output of `compress_gpt2.py`. Singular values of the 24 **original** matrices, keys `h0_c_fc` … `h11_c_proj`. |
 
 ## Results: main experiment (r = 8 to 64)
@@ -124,14 +126,16 @@ The main experiment left a puzzle: Hadamard had the lower weight error but often
 
 It also repeats the comparison at gentler budgets: each of the 24 matrices compressed alone at r = 64 and 128, and all 24 together at r = 64, 128, 192 and 256 (21% to 83% of each matrix stored).
 
-To run it (about 75 minutes on an RTX 4050; it makes 104 perplexity evaluations):
+All numbers below are from one run of `diagnostics.py` (15 November 2026, same machine and versions as above) and are read from `diagnostics.csv`.
 
-```
-python diagnostics.py     # -> diagnostics.csv
-python plot.py            # also draws perplexity_gentle.png and error_vs_perplexity.png
-```
+### Short answer
 
-### H3: bug check (done)
+- **H3 (bug): refuted.** The model holds exactly the fitted weights.
+- **H1 (error direction): not supported as stated.** Relative output error is a worse predictor of single-matrix perplexity than weight error, and its rank correlation with perplexity is negative.
+- **H2 (outlier entries): refuted.** Hadamard's entrywise errors are smaller and more evenly spread than SVD's at every budget where it loses.
+- **The puzzle is specific to small budgets.** From r = 128 upwards, with all 24 matrices compressed, Hadamard is clearly better, and the gap widens to 45 against 1,399 at r = 256.
+
+### H3: bug check
 
 Only the named matrix is replaced. Uncompressed perplexity is 25.17.
 
@@ -144,9 +148,76 @@ Only the named matrix is replaced. Uncompressed perplexity is 25.17.
 
 The errors agree, the layer's output equals `x @ W_hat + bias` for the fitted matrix, and the original weight is restored exactly. No bug was found. Near break-even, Hadamard has both the lower weight error and the perplexity closer to the baseline.
 
-### H1, H2 and the gentler budgets
+### Gentler budgets, all 24 matrices compressed
 
-Not reported yet. The results will be added here.
+| r | Stored share | SVD rank 2r: perplexity | Hadamard rank r: perplexity | SVD: mean weight error | Hadamard: mean weight error | SVD: mean output error | Hadamard: mean output error |
+|---|---|---|---|---|---|---|---|
+| 64 | 20.8% | 5,843 | 8,547 | 0.748 | 0.691 | 0.489 | 0.529 |
+| 128 | 41.7% | 4,343 | 2,083 | 0.589 | 0.477 | 0.390 | 0.403 |
+| 192 | 62.5% | 2,586 | 253 | 0.449 | 0.291 | 0.305 | 0.269 |
+| 256 | 83.3% | 1,399 | 45.2 | 0.318 | 0.185 | 0.225 | 0.186 |
+
+![Perplexity against parameter budget, gentler budgets](perplexity_gentle.png)
+
+Hadamard loses at r = 64 and wins at r = 128, 192 and 256, by a factor of 2, 10 and 31. At 83% of the storage, SVD still gives perplexity 1,399; Hadamard gives 45.2 against 25.17 uncompressed. Even here neither method is close to lossless when all 24 matrices are compressed.
+
+### One matrix compressed at a time (r = 64 and 128)
+
+The ten most damaging single-matrix runs, out of 96 (the full table is in `diagnostics.csv`, column `perplexity_single`):
+
+| Matrix | Method | r | Stored share | Weight error | Output error | Perplexity |
+|---|---|---|---|---|---|---|
+| `h[0].c_proj` | Hadamard | 64 | 20.8% | 0.654 | 0.663 | 117.1 |
+| `h[0].c_proj` | SVD | 64 | 20.8% | 0.748 | 0.704 | 106.4 |
+| `h[0].c_fc` | SVD | 64 | 20.8% | 0.759 | 0.305 | 89.7 |
+| `h[1].c_fc` | SVD | 128 | 41.7% | 0.594 | 0.304 | 69.0 |
+| `h[1].c_fc` | SVD | 64 | 20.8% | 0.747 | 0.380 | 49.6 |
+| `h[0].c_fc` | SVD | 128 | 41.7% | 0.593 | 0.225 | 37.4 |
+| `h[4].c_fc` | SVD | 64 | 20.8% | 0.737 | 0.370 | 36.5 |
+| `h[5].c_fc` | Hadamard | 64 | 20.8% | 0.702 | 0.416 | 36.4 |
+| `h[0].c_fc` | Hadamard | 64 | 20.8% | 0.658 | 0.300 | 36.3 |
+| `h[5].c_fc` | SVD | 64 | 20.8% | 0.740 | 0.370 | 35.6 |
+
+- **Damage is concentrated in the first two blocks.** `h[0].c_proj`, `h[0].c_fc` and `h[1].c_fc` account for the six worst runs. The median over all 96 runs is 26.5, and only 17 runs exceed 30.
+- **`c_fc` matrices are more sensitive than `c_proj`.** Outside block 0, every `c_proj` run stays below 29.1.
+- **Hadamard is better on `c_fc`, SVD on `c_proj`.** Hadamard has the lower perplexity on 7 of 12 `c_fc` matrices at r = 64 and 11 of 12 at r = 128, but on only 1 and 2 of 12 `c_proj` matrices. Overall it wins 8 of 24 at r = 64 and 13 of 24 at r = 128. Most `c_proj` differences are small (under 1 perplexity point outside blocks 0 and 1).
+- **SVD on `h[1].c_fc` is not monotone:** perplexity 49.6 at r = 64 and 69.0 at r = 128, although the weight and output errors both fall.
+
+### H1: which error measure predicts the damage?
+
+![Weight error and output error against perplexity](error_vs_perplexity.png)
+
+Spearman rank correlation with log perplexity over the 48 single-matrix runs of each method:
+
+| Method | Weight error | Output error |
+|---|---|---|
+| SVD | +0.08 | −0.38 |
+| Hadamard | +0.56 | −0.12 |
+
+Neither measure predicts the damage well, and output error is the worse of the two: its correlation is negative for both methods. The reason is visible in the tables above. Most `c_proj` matrices have large relative output errors (above 0.5 on 10 of 12 for SVD at r = 64) and almost no effect on perplexity, while `c_fc` matrices have smaller output errors (0.30 to 0.45 at r = 64) and larger effects. Splitting by matrix type removes the negative sign but does not put output error ahead: within `c_fc` the correlations are +0.32 (weight) and +0.02 (output) for SVD, +0.50 and +0.35 for Hadamard; within `c_proj`, +0.34 and +0.31 for SVD, +0.58 and +0.43 for Hadamard.
+
+A second, paired test asks whether, on the same matrix and r, the method with the lower error also has the lower perplexity. Hadamard has the lower weight error in all 48 pairs, so weight error predicts the winner only when Hadamard wins: 21 of 48. Output error predicts the winner in 31 of 48 (17 of 24 at r = 64, 14 of 24 at r = 128). It does well on `c_proj` (21 of 24) and poorly on `c_fc` (10 of 24): at r = 128 Hadamard has the higher output error on 10 of 12 `c_fc` matrices and the lower perplexity on 11 of 12.
+
+What does hold: Hadamard's advantage in weight error shrinks or reverses when measured on real activations. At r = 64 and r = 128 it has the lower weight error on all 24 matrices but the lower output error on only 5. At r = 192 it has the lower output error on 23 of 24. So the error-direction effect is real, but output error measured one layer at a time does not explain the perplexity ordering.
+
+### H2: entrywise errors
+
+Means over the 24 matrices:
+
+| r | max \|E\|: SVD | max \|E\|: Hadamard | 99.9th pct of \|E\|: SVD | 99.9th pct: Hadamard | Column-norm ratio: SVD | Column-norm ratio: Hadamard |
+|---|---|---|---|---|---|---|
+| 64 | 2.20 | 0.75 | 0.338 | 0.304 | 1.42 | 1.18 |
+| 128 | 1.84 | 0.57 | 0.262 | 0.216 | 1.38 | 1.23 |
+| 192 | 1.59 | 0.49 | 0.200 | 0.142 | 1.54 | 1.36 |
+| 256 | 1.35 | 0.82 | 0.146 | 0.105 | 1.84 | 2.51 |
+
+At r = 64, where Hadamard loses, its largest error entry is smaller than SVD's on all 24 matrices, its 99.9th percentile is smaller on all 24, and its column-norm ratio is smaller on 21. The only place Hadamard's errors are less even is r = 256 (column-norm ratio larger on 13 of 24 matrices, up to 6.6), and there its perplexity is 31 times better than SVD's. H2 is refuted.
+
+At r = 256 there is one matrix, `h[0].c_proj`, where HadNet has the higher weight error (0.384 against 0.316). It is the only such case among the 96 fits at these four ranks.
+
+### What remains unexplained
+
+Why Hadamard is worse at small budgets (r ≤ 64) with all matrices compressed is still open. It is not a bug, not outlier entries, and not captured by per-layer output error. Two things these measurements do not cover are how errors in different layers compound when all 24 are compressed together, and the effect of the nonlinearity between `c_fc` and `c_proj`.
 
 ## Limits
 
