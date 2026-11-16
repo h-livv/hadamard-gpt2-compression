@@ -1,7 +1,7 @@
 """
-Correctness checks for hadamard.py. Run:  python checks.py   (CPU, well under a minute)
+Correctness checks for src/hadamard.py and src/metrics.py. Run:  python tests/checks.py   (CPU, well under a minute)
 
-Checks 1-5, 7 and 8 are exact identities, so they use float64 and assert.
+Checks 1-5 and 7-9 are exact identities, so they use float64 and assert.
 Check 6 runs the real optimiser with the paper's settings in float32.
 "paper" as in hadamard.py. "README §M1..M4" are the short derivations in the
 README section "Maths behind the checks".
@@ -9,8 +9,14 @@ README section "Maths behind the checks".
 
 import torch
 
-from diagnostics import output_error, spearman
-from hadamard import hadnet_fit, reconstruct, svd_init, svd_truncate
+import sys
+from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))   # repository root, so `src` imports
+
+from src.hadamard import (hadnet_fit, reconstruct, svd_init, svd_truncate, weighted_error,
+                          whitened_svd)
+from src.metrics import output_error, spearman
 
 torch.manual_seed(42)  # paper §5: seed 42
 
@@ -146,6 +152,37 @@ def check_spearman():
     print("8. Spearman rank correlation (+1, -1, hand example 0.8) .. OK")
 
 
+def check_weighted():
+    """Activation-weighted error and whitened SVD (hadamard.weighted_error, whitened_svd).
+
+    (a) weighted_error(E, X^T X) = ||E X^T||_F computed directly; with G = I it is ||E||_F.
+    (b) whitened_svd with G = I is the plain truncated SVD.
+    (c) whitened_svd attains the Eckart-Young bound in the weighted error: its error is
+        sqrt(sum of discarded sigma_i^2 of W S), and it beats plain SVD in that error.
+    """
+    out, inp, tokens, k = 30, 20, 200, 5
+    W = torch.randn(out, inp, dtype=torch.float64)                       # (out, in)
+    X = torch.randn(tokens, inp, dtype=torch.float64) * torch.linspace(0.1, 3, inp, dtype=torch.float64)
+    G = X.T @ X                                                          # (in, in)
+    E = torch.randn(out, inp, dtype=torch.float64)                       # (out, in)
+    assert abs(weighted_error(E, G) - torch.linalg.norm(E @ X.T)) < 1e-9
+    assert abs(weighted_error(E, torch.eye(inp, dtype=torch.float64)) - torch.linalg.norm(E)) < 1e-12
+
+    I = torch.eye(inp, dtype=torch.float64)
+    A, B = whitened_svd(W, k, I)
+    A0, B0 = svd_truncate(W, k)
+    assert torch.allclose(A @ B, A0 @ B0, atol=1e-10)
+
+    A, B = whitened_svd(W, k, G)
+    err_white = weighted_error(W - A @ B, G).item()
+    lam, Q = torch.linalg.eigh(G)
+    sigma = torch.linalg.svdvals(W @ (Q * torch.sqrt(lam)))
+    assert abs(err_white - torch.sqrt(torch.sum(sigma[k:] ** 2)).item()) < 1e-8
+    err_plain = weighted_error(W - A0 @ B0, G).item()
+    assert err_white <= err_plain
+    print(f"9. Weighted error identity; whitened SVD at Eckart-Young bound ({err_white:.4f} <= plain {err_plain:.4f}) ... OK")
+
+
 if __name__ == "__main__":
     check_khatri_rao()
     check_rank_bound()
@@ -155,4 +192,5 @@ if __name__ == "__main__":
     check_spectrum_dependence()
     check_output_error()
     check_spearman()
+    check_weighted()
     print("All checks passed.")

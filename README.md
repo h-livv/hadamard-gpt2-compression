@@ -4,7 +4,7 @@ A small, fully traceable experiment on the method of Panchal, Sahoo and Behera, 
 
 It compresses the MLP weight matrices of GPT-2 small with the paper's Hadamard decomposition (HadNet) and with truncated SVD **at the same number of stored parameters**, and measures WikiText-2 perplexity.
 
-This is an independent study project. It is not affiliated with the paper's authors. Every function is traced to the paper or to public code in [`VERIFICATION.md`](VERIFICATION.md).
+This is an independent study project. It is not affiliated with the paper's authors. Every function is traced to the paper or to public code in [`docs/VERIFICATION.md`](docs/VERIFICATION.md).
 
 ## What the experiment tests
 
@@ -17,7 +17,7 @@ Two compression methods are compared. Write (m, n) for the matrix shape.
 
 ### Why the fair baseline is SVD at rank 2r
 
-The Hadamard factors hold 2·r·m + 2·r·n = 2r(m+n) numbers. A rank-k SVD, stored as U_kΣ_k and V_kᵀ, holds k(m+n). The two are equal when k = 2r. The paper's tables compare Hadamard at rank r with SVD at rank r, which gives the Hadamard side twice the storage. Here both methods get exactly the same number of stored numbers (`checks.py`, check 5).
+The Hadamard factors hold 2·r·m + 2·r·n = 2r(m+n) numbers. A rank-k SVD, stored as U_kΣ_k and V_kᵀ, holds k(m+n). The two are equal when k = 2r. The paper's tables compare Hadamard at rank r with SVD at rank r, which gives the Hadamard side twice the storage. Here both methods get exactly the same number of stored numbers (`tests/checks.py`, check 5).
 
 The interest of the Hadamard form is that its result can have rank up to r² (paper Prop. 3.3), far above 2r, for the same storage. Whether that helps depends on the matrix: it can only help if the singular values between positions 2r+1 and r² carry real weight (paper Prop. 3.5).
 
@@ -27,7 +27,7 @@ After fitting, the dense matrix is rebuilt from the factors and copied back into
 
 ## Maths behind the checks
 
-`checks.py` tests these four facts numerically. They are short enough to derive here.
+`tests/checks.py` tests these four facts numerically. They are short enough to derive here.
 
 **M1. Khatri–Rao identity (why the rank can reach r²).** Expand one entry of the Hadamard product:
 
@@ -60,44 +60,56 @@ python -m venv .venv
 source .venv/bin/activate
 pip install -r requirements.txt
 
-python checks.py          # 8 correctness checks, a few seconds, must end with "All checks passed."
-python compress_gpt2.py   # main experiment, r = 8..64     -> results.csv, spectra.npz
-python diagnostics.py     # diagnostics, r = 64..256       -> diagnostics.csv
-python plot.py            # figures                        -> *.png
+python tests/checks.py                  # 9 correctness checks, a few seconds, must end with "All checks passed."
+python experiments/compress_gpt2.py     # main experiment, r = 8..64          -> results/results.csv, results/spectra.npz
+python experiments/diagnostics.py       # diagnostics, r = 64..256            -> results/diagnostics.csv
+python experiments/activation_aware.py  # weighted fits, blocks 2-11          -> results/activation_aware.csv
+python experiments/cumulative.py        # blocks 2..11 compressed one by one  -> results/cumulative.csv
+python experiments/plot.py              # figures                             -> figures/*.png
 ```
+
+The scripts can be run from any directory.
 
 GPT-2 small and WikiText-2 are downloaded from the Hugging Face Hub on first use. They are not part of this repository.
 
-On the laptop GPU used for the results below (RTX 4050), `compress_gpt2.py` takes about 11 minutes: about 3 s per HadNet fit (96 fits) and about 35 s per perplexity evaluation (9 evaluations). `diagnostics.py` takes about 75 minutes; it makes 104 perplexity evaluations.
+On the laptop GPU used for the results (RTX 4050), `compress_gpt2.py` takes about 11 minutes: about 3 s per HadNet fit (96 fits) and about 35 s per perplexity evaluation (9 evaluations). `diagnostics.py` takes about 75 minutes; it makes 104 perplexity evaluations. `activation_aware.py` takes about 35 minutes and `cumulative.py` about 35 minutes; the activation-weighted HadNet fits (about 10-25 s each) are the slow part.
 
-To change ranks, methods or layers, edit the constants at the top of `compress_gpt2.py` or `diagnostics.py`. There are no command-line options.
+To change ranks, methods or layers, edit the constants at the top of each experiment script. There are no command-line options.
 
-## What each file does
+## Repository layout
 
-| File | Purpose |
-|---|---|
-| `hadamard.py` | The maths on one matrix: `svd_init`, `hadnet_fit`, `reconstruct`, `svd_truncate`. |
-| `checks.py` | Eight correctness checks (Khatri–Rao identity, rank bound, exact SVD init, Eckart–Young, parameter count, spectrum dependence, output-error identity, Spearman). |
-| `compress_gpt2.py` | Loads GPT-2 small, compresses the 24 MLP matrices for each method and rank, measures perplexity, writes `results.csv` and `spectra.npz`. |
-| `diagnostics.py` | Bug check, gentler budgets, output-error and entrywise-error measurements; writes `diagnostics.csv`. See "Diagnostics" in `RESULTS.md`. |
-| `plot.py` | Draws `perplexity.png` and `spectra.png`, and from `diagnostics.csv` also `perplexity_gentle.png` and `error_vs_perplexity.png`. |
-| `RESULTS.md` | Results of both scripts, the diagnostics, and the conclusions. |
-| `VERIFICATION.md` | One row per function: where it comes from (paper section or URL) and how it differs from the source. |
-| `requirements.txt` | torch, transformers, datasets, numpy, matplotlib, with the versions used. |
-| `results.csv` | Output of `compress_gpt2.py`. One row per compressed matrix (method, r, layer, matrix, stored numbers, relative Frobenius error, fit time) with the run's perplexity repeated on each row; plus one baseline row. |
-| `diagnostics.csv` | Output of `diagnostics.py`. One row per compressed matrix: weight error, output error, entrywise statistics, perplexity with that matrix alone compressed (r = 64, 128), perplexity with all 24 compressed. |
-| `spectra.npz` | Output of `compress_gpt2.py`. Singular values of the 24 **original** matrices, keys `h0_c_fc` … `h11_c_proj`. |
+```
+src/            the library
+  hadamard.py     the method: SVD initialisation, HadNet, reconstruction, truncated and whitened SVD
+  metrics.py      error measures: weight error, output error, entrywise statistics, Spearman
+  gpt2.py         GPT-2 plumbing: read/write MLP weights, test perplexity, calibration Gram matrices
+  methods.py      the compression methods as the experiments call them (equal storage 2r(m+n)), and model size
+  paths.py        locations of results/ and figures/
+experiments/    one script per experiment, plus plot.py
+tests/          checks.py
+results/        CSV and .npz output of the experiments
+figures/        PNG output of experiments/plot.py: weight_error_fits/, activation_aware_fits/, the spectra and the model-size plot
+docs/           RESULTS.md (results and conclusions), VERIFICATION.md (where every function comes from)
+```
+
+| Experiment script | What it does | Writes |
+|---|---|---|
+| `experiments/compress_gpt2.py` | Compresses all 24 MLP matrices for each method and r = 8..64 and measures perplexity. | `results/results.csv` (one row per compressed matrix, with the run's perplexity; plus a baseline row), `results/spectra.npz` (singular values of the 24 original matrices, keys `h0_c_fc` … `h11_c_proj`) |
+| `experiments/diagnostics.py` | Bug check, gentler budgets (r = 64..256), each matrix compressed alone (r = 64, 128), output error and entrywise error statistics. See "Diagnostics" in `docs/RESULTS.md`. | `results/diagnostics.csv` |
+| `experiments/activation_aware.py` | Blocks 0 and 1 left uncompressed; the other 20 MLP matrices compressed together by SVD and Hadamard, each fitted to weight error and to activation-weighted error. Resumes if interrupted. | `results/activation_aware.csv` |
+| `experiments/cumulative.py` | Compresses blocks 2, 3, ..., 11 one after another with the two activation-weighted methods and measures perplexity after each block. Resumes if interrupted. | `results/cumulative.csv` |
+| `experiments/plot.py` | Draws every figure from the files in `results/`. | `figures/singular_value_spectra_original.png`, `figures/model_size_vs_perplexity_all_runs.png`, `figures/weight_error_fits/*.png`, `figures/activation_aware_fits/*.png` |
 
 ## Results
 
-The results, the diagnostics and the conclusions drawn from them are in [`RESULTS.md`](RESULTS.md).
+The results, the diagnostics and the conclusions drawn from them are in [`docs/RESULTS.md`](docs/RESULTS.md).
 
 ## Limits
 
-- The loss fitted is plain weight error ‖W − Ŵ‖_F. Nothing here is activation-aware, and nothing is fine-tuned after compression.
+- `compress_gpt2.py` and `diagnostics.py` fit plain weight error ‖W − Ŵ‖_F. Only `activation_aware.py` fits the activation-weighted error, and its calibration activations come from the original model (errors in earlier layers are not fed forward). Nothing is fine-tuned after compression.
 - Only the MLP matrices are compressed; attention and embedding weights are untouched.
 - HadNet used the paper's settings unchanged (Adam, learning rate 0.1, 2000 epochs, ×0.1 after 100 epochs without improvement). They were not tuned for these matrices.
-- `hadnet_fit` returns the best factors seen, whereas the paper's Algorithm 7 and code return the last ones (see `VERIFICATION.md`, note 1).
+- `hadnet_fit` returns the best factors seen, whereas the paper's Algorithm 7 and code return the last ones (see `docs/VERIFICATION.md`, note 1).
 - One model, one dataset, one run.
 
 ## Sources and acknowledgements

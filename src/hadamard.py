@@ -60,7 +60,23 @@ def reconstruct(W1, H1, W2, H2):
     return X_pred
 
 
-def hadnet_fit(X, r, max_epochs=2000, lr=0.1, patience=100):
+def weighted_error(E, G):
+    """Activation-weighted error ||E X^T||_F for E (out, in) and G = X^T X (in, in).
+
+    X is the (tokens, in) matrix of the layer's real inputs. In the (out, in)
+    layout the layer's output error on those inputs is E X^T, and
+        ||E X^T||_F^2 = trace(E X^T X E^T) = trace(E G E^T) = sum(E * (E @ G)).
+    With G = I this is the plain Frobenius norm ||E||_F.
+
+    Args:    E (out, in), G (in, in) symmetric positive semidefinite.
+    Returns: scalar tensor (differentiable).
+    Source:  the loss ||W X - W' X||_F of SVD-LLM (Wang et al., ICLR 2025) and
+             ASVD (Yuan et al., arXiv:2312.05821), written with the Gram matrix.
+    """
+    return torch.sqrt(torch.sum(E * (E @ G)))
+
+
+def hadnet_fit(X, r, max_epochs=2000, lr=0.1, patience=100, G=None):
     """Fit the Hadamard decomposition of X with HadNet (paper §4.1, Algorithm 7).
 
     HadNet has no layers: the four factors are the trainable parameters and
@@ -71,6 +87,10 @@ def hadnet_fit(X, r, max_epochs=2000, lr=0.1, patience=100):
     Defaults are the paper's (§5): lr 0.1, 2000 epochs, patience ("wait") 100.
 
     Args:    X (m, n), r with 1 <= r <= min(m, n).
+             G (n, n) optional. If given, the loss is the activation-weighted
+             error weighted_error(X - X_pred, G) instead of ||X - X_pred||_F
+             (X is then a weight in the (out, in) layout and G the Gram matrix
+             of the layer's inputs). Everything else is unchanged.
     Returns: W1 (m, r), H1 (r, n), W2 (m, r), H2 (r, n), hist
              The factors are the best ones seen (lowest loss).
              hist is a list of max_epochs floats, the loss at each epoch;
@@ -95,7 +115,10 @@ def hadnet_fit(X, r, max_epochs=2000, lr=0.1, patience=100):
     for epoch in range(max_epochs):                          # Algorithm 7, line 5
         opt.zero_grad()
         X_pred = reconstruct(W1, H1, W2, H2)                 # (m, n)   lines 6-8
-        loss = torch.linalg.norm(X - X_pred, "fro")          # scalar   line 9
+        if G is None:
+            loss = torch.linalg.norm(X - X_pred, "fro")      # scalar   line 9
+        else:
+            loss = weighted_error(X - X_pred, G)             # scalar   line 9, activation-weighted
         loss.backward()                                      # line 10 (backpropagate)
         hist.append(loss.item())
 
@@ -138,3 +161,28 @@ def svd_truncate(X, k):
     A = U[:, :k] * S[:k]                                     # (m, k)  singular values folded into U
     B = Vh[:k, :]                                            # (k, n)
     return A, B
+
+
+def whitened_svd(X, k, G):
+    """Rank-k approximation minimising the activation-weighted error (SVD-LLM's truncation-aware whitening).
+
+    Write G = S S^T. Then weighted_error(E, G) = ||E S||_F, so the best rank-k
+    X_hat in that error is X_hat = [X S]_k S^{-1}, where [.]_k is the truncated
+    SVD (Eckart-Young applied to X S). S comes from an eigendecomposition
+    G = Q diag(lam) Q^T, S = Q diag(sqrt(lam)), which, unlike Cholesky, does
+    not fail when G is nearly singular.
+
+    Args:    X (out, in), k, G (in, in) symmetric positive definite (damped by the caller).
+    Returns: A (out, k), B (k, in) with X_hat = A @ B; k(out + in) numbers, as svd_truncate.
+    Source:  SVD-LLM (Wang, Zheng, Wan, Zhang, ICLR 2025), §3.1 "truncation-aware
+             data whitening": SVD of W S, truncate, multiply by S^{-1}.
+             https://github.com/AIoT-MLSys-Lab/SVD-LLM, SVDLLM.py `whitening`.
+    Differs: SVD-LLM uses a Cholesky factor of X X^T (adding to the diagonal if
+             it fails); we use the symmetric eigendecomposition. Any S with
+             S S^T = G gives the same X_hat.
+    """
+    lam, Q = torch.linalg.eigh(G)                            # (in,), (in, in)
+    S = Q * torch.sqrt(lam)                                  # (in, in), S S^T = G
+    S_inv = (Q / torch.sqrt(lam)).T                          # (in, in), S^{-1} = diag(1/sqrt(lam)) Q^T
+    A, B = svd_truncate(X @ S, k)                            # (out, k), (k, in)
+    return A, B @ S_inv
