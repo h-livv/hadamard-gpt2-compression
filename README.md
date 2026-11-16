@@ -1,122 +1,69 @@
 # Hadamard decomposition vs. truncated SVD on GPT-2 small
 
-A small, fully traceable experiment on the method of Panchal, Sahoo and Behera, [*Tensor decomposition and neural architectures through generalized Hadamard products*](https://doi.org/10.1016/j.neucom.2026.134372), Neurocomputing 699 (2026) 134372.
+An independent study of the method of Panchal, Sahoo and Behera, [*Tensor decomposition and neural architectures through generalized Hadamard products*](https://doi.org/10.1016/j.neucom.2026.134372), Neurocomputing 699 (2026) 134372. Not affiliated with the authors.
 
-It compresses the MLP weight matrices of GPT-2 small with the paper's Hadamard decomposition (HadNet) and with truncated SVD **at the same number of stored parameters**, and measures WikiText-2 perplexity.
+It compresses the 24 MLP weight matrices of GPT-2 small with the paper's Hadamard decomposition and with truncated SVD **at the same storage**, and measures WikiText-2 test perplexity (uncompressed: 25.17).
 
-This is an independent study project. It is not affiliated with the paper's authors. Every function is traced to the paper or to public code in [`docs/VERIFICATION.md`](docs/VERIFICATION.md).
+**Result:** at equal storage, the Hadamard form approximates GPT-2's weights better than SVD and, with plain weight-error fits, gives far better models from about 40% storage up (45 against 1,399 at 83%). The larger gain comes from fitting the error on real activations instead: whitened SVD then reaches perplexity 29.3 with blocks 2–11 compressed. Weighted Hadamard wins at the smallest budget; at larger ones its optimiser, run with the paper's settings, does not converge on some matrices under this new loss. Details in [`docs/RESULTS.md`](docs/RESULTS.md).
 
-## What the experiment tests
+## Method
 
-GPT-2 small has 12 transformer blocks. Each block's MLP has two weight matrices, `c_fc` (3072×768) and `c_proj` (768×3072), 24 matrices in all. We replace every one of them by a compressed version and measure how much the language model degrades, using WikiText-2 test perplexity (lower is better).
+- **What is compressed.** Each of GPT-2 small's 12 blocks has an MLP with two weight matrices, `c_fc` (768 → 3072) and `c_proj` (3072 → 768). Each is replaced by a low-storage approximation Ŵ, rebuilt as a dense matrix and copied back. Only storage is reduced; the model runs as before, and nothing is fine-tuned.
+- **Two methods at equal storage.** Hadamard at rank r, Ŵ = (W₁H₁) ∘ (W₂H₂) with ∘ the entrywise product, fitted with HadNet (paper Algorithm 7) from the paper's SVD initialisation. Against truncated SVD at rank **2r**. Both store 2r(m+n) numbers. (The paper's tables compare the two at equal rank r, where the Hadamard factors take twice the storage; this study fixes storage instead.)
+- **Two losses.** Plain weight error ‖W − Ŵ‖_F. Or the activation-weighted error ‖X(W − Ŵ)‖_F on the layer's real inputs X (calibration text from the WikiText-2 training split), as in SVD-LLM and ASVD. For SVD the optimum of the latter is SVD-LLM's whitened SVD; for Hadamard, HadNet is run with that loss, an extension made here that is not part of the paper.
 
-Two compression methods are compared. Write (m, n) for the matrix shape.
+### Maths behind the checks
 
-1. **Truncated SVD at rank 2r.** W ≈ U Σ Vᵀ with the top 2r singular values kept. By the Eckart–Young theorem this is the best possible approximation of rank 2r.
-2. **Hadamard decomposition at rank r.** W ≈ (W1 H1) ∘ (W2 H2), where ∘ is the entrywise product, W1 and W2 are (m, r), H1 and H2 are (r, n). The factors are fitted with HadNet (paper §4.1, Algorithm 7), started from the SVD initialisation (paper §3.3).
+`tests/checks.py` verifies these numerically.
 
-### Why the fair baseline is SVD at rank 2r
-
-The Hadamard factors hold 2·r·m + 2·r·n = 2r(m+n) numbers. A rank-k SVD, stored as U_kΣ_k and V_kᵀ, holds k(m+n). The two are equal when k = 2r. The paper's tables compare Hadamard at rank r with SVD at rank r, which gives the Hadamard side twice the storage. Here both methods get exactly the same number of stored numbers (`tests/checks.py`, check 5).
-
-The interest of the Hadamard form is that its result can have rank up to r² (paper Prop. 3.3), far above 2r, for the same storage. Whether that helps depends on the matrix: it can only help if the singular values between positions 2r+1 and r² carry real weight (paper Prop. 3.5).
-
-### What is and is not measured
-
-After fitting, the dense matrix is rebuilt from the factors and copied back into the model. This measures **storage compression only**. The model runs exactly as fast as before, and nothing is fine-tuned afterwards.
-
-## Maths behind the checks
-
-`tests/checks.py` tests these four facts numerically. They are short enough to derive here.
-
-**M1. Khatri–Rao identity (why the rank can reach r²).** Expand one entry of the Hadamard product:
-
-```
-[(W1 H1) ∘ (W2 H2)]_ij = (Σ_k W1_ik H1_kj) (Σ_l W2_il H2_lj)
-                       = Σ_{k,l} (W1_ik W2_il) (H1_kj H2_lj)
-                       = Σ_{k,l} E_{i,(k,l)} F_{(k,l),j}
-```
-
-So (W1 H1) ∘ (W2 H2) = E F, where E (m, r²) has rows `W1[i] ⊗ W2[i]` (row-wise Khatri–Rao product) and F (r², n) has columns `H1[:, j] ⊗ H2[:, j]` (column-wise Khatri–Rao product). A product with inner dimension r² has rank at most r². This is the paper's Prop. 3.3.
-
-**M2. Eckart–Young error formula.** If X has singular values σ₁ ≥ σ₂ ≥ …, its rank-k truncated SVD X_k is the best rank-k approximation in Frobenius norm, and ‖X − X_k‖_F² = Σ_{i>k} σᵢ². The paper uses this as its Theorem 3.1 (summed over tensor slices).
-
-**M3. Parameter count.** Hadamard at rank r stores four factors: 2·(m·r) + 2·(r·n) = 2r(m+n). SVD at rank k stores U_kΣ_k (m, k) and V_kᵀ (k, n): k(m+n). Equal at k = 2r.
-
-**M4. How much Hadamard can gain over SVD (paper Prop. 3.5).** Let Â be the best Hadamard approximation at rank r. By M1 it has rank ≤ r², so by M2 it cannot beat the rank-r² SVD: ‖A − Â‖² ≥ Σ_{i>r²} σᵢ². Subtracting from the rank-2r SVD error Σ_{i>2r} σᵢ² gives
-
-```
-‖A − A_2r‖² − ‖A − Â‖²  ≤  Σ_{i=2r+1}^{r²} σᵢ²
-```
-
-The possible gain is the energy in singular values 2r+1 … r². It is large for a flat spectrum and small for a fast-decaying one. It is only an upper bound: the actual gain can be smaller, or negative. Check 6 shows both cases.
+- **M1. Rank up to r².** Expanding an entry, (W₁H₁) ∘ (W₂H₂) = E·F, where E (m × r²) has rows W₁[i] ⊗ W₂[i] and F (r² × n) has columns H₁[:, j] ⊗ H₂[:, j] (Khatri–Rao products). So its rank is at most r² (paper Prop. 3.3), against 2r for SVD at the same storage.
+- **M2. Eckart–Young.** Truncated SVD at rank k is the best rank-k approximation, with ‖X − X_k‖_F² = Σ_{i>k} σᵢ² (the matrix case of paper Theorem 3.1).
+- **M3. Equal storage.** Hadamard at rank r stores 2·(m·r) + 2·(r·n) = 2r(m+n); SVD at rank k stores k(m+n). Equal at k = 2r.
+- **M4. Possible gain.** By M1 and M2, ‖A − A₂ᵣ‖² − ‖A − Â‖² ≤ Σ_{i=2r+1}^{r²} σᵢ² (our reading of paper Prop. 3.5). The gain can be large only for a flat spectrum, which GPT-2's MLP matrices have. It is an upper bound; the real gain can be smaller or negative.
 
 ## How to run it
 
-Needs Python 3.12 and, for reasonable speed, a CUDA GPU (about 6 GB is enough).
+Python 3.12 and, for reasonable speed, a CUDA GPU with about 6 GB. GPT-2 small and WikiText-2 are downloaded from the Hugging Face Hub on first use. Times are for an RTX 4050 laptop GPU.
 
 ```
-python -m venv .venv
-source .venv/bin/activate
+python -m venv .venv && source .venv/bin/activate
 pip install -r requirements.txt
 
-python tests/checks.py                  # 9 correctness checks, a few seconds, must end with "All checks passed."
-python experiments/compress_gpt2.py     # main experiment, r = 8..64          -> results/results.csv, results/spectra.npz
-python experiments/diagnostics.py       # diagnostics, r = 64..256            -> results/diagnostics.csv
-python experiments/activation_aware.py  # weighted fits, blocks 2-11          -> results/activation_aware.csv
-python experiments/cumulative.py        # blocks 2..11 compressed one by one  -> results/cumulative.csv
-python experiments/plot.py              # figures                             -> figures/*.png
+python tests/checks.py                  # 9 checks, seconds; must end with "All checks passed."
+python experiments/compress_gpt2.py     # benchmark, all 24 matrices, r = 8..64     (~11 min)
+python experiments/diagnostics.py       # bug check, r = 64..256, one matrix at a time (~75 min)
+python experiments/activation_aware.py  # four fits, blocks 2-11, r = 64..256          (~35 min)
+python experiments/cumulative.py        # blocks 2..11 compressed one by one           (~50 min)
+python experiments/plot.py              # every figure
 ```
 
-The scripts can be run from any directory.
+Settings are constants at the top of each script. `activation_aware.py` and `cumulative.py` resume if interrupted.
 
-GPT-2 small and WikiText-2 are downloaded from the Hugging Face Hub on first use. They are not part of this repository.
-
-On the laptop GPU used for the results (RTX 4050), `compress_gpt2.py` takes about 11 minutes: about 3 s per HadNet fit (96 fits) and about 35 s per perplexity evaluation (9 evaluations). `diagnostics.py` takes about 75 minutes; it makes 104 perplexity evaluations. `activation_aware.py` takes about 35 minutes and `cumulative.py` about 35 minutes; the activation-weighted HadNet fits (about 10-25 s each) are the slow part.
-
-To change ranks, methods or layers, edit the constants at the top of each experiment script. There are no command-line options.
-
-## Repository layout
+## Layout
 
 ```
-src/            the library
-  hadamard.py     the method: SVD initialisation, HadNet, reconstruction, truncated and whitened SVD
-  metrics.py      error measures: weight error, output error, entrywise statistics, Spearman
-  gpt2.py         GPT-2 plumbing: read/write MLP weights, test perplexity, calibration Gram matrices
-  methods.py      the compression methods as the experiments call them (equal storage 2r(m+n)), and model size
-  paths.py        locations of results/ and figures/
+src/
+  hadamard.py   the method: SVD initialisation, HadNet, truncated and whitened SVD
+  metrics.py    weight error, output error, entrywise statistics, Spearman
+  gpt2.py       GPT-2 weights, test perplexity, calibration Gram matrices
+  methods.py    the methods at equal storage, damping, model size
+  paths.py      locations of results/ and figures/
 experiments/    one script per experiment, plus plot.py
 tests/          checks.py
-results/        CSV and .npz output of the experiments
-figures/        PNG output of experiments/plot.py: weight_error_fits/, activation_aware_fits/, the spectra and the model-size plot
-docs/           RESULTS.md (results and conclusions), VERIFICATION.md (where every function comes from)
+results/        results.csv, spectra.npz (compress_gpt2); diagnostics.csv; activation_aware.csv; cumulative.csv
+figures/        weight_error_fits/, activation_aware_fits/, and the singular-value spectra
+docs/           RESULTS.md (results), VERIFICATION.md (where every function comes from)
 ```
-
-| Experiment script | What it does | Writes |
-|---|---|---|
-| `experiments/compress_gpt2.py` | Compresses all 24 MLP matrices for each method and r = 8..64 and measures perplexity. | `results/results.csv` (one row per compressed matrix, with the run's perplexity; plus a baseline row), `results/spectra.npz` (singular values of the 24 original matrices, keys `h0_c_fc` … `h11_c_proj`) |
-| `experiments/diagnostics.py` | Bug check, gentler budgets (r = 64..256), each matrix compressed alone (r = 64, 128), output error and entrywise error statistics. See "Diagnostics" in `docs/RESULTS.md`. | `results/diagnostics.csv` |
-| `experiments/activation_aware.py` | Blocks 0 and 1 left uncompressed; the other 20 MLP matrices compressed together by SVD and Hadamard, each fitted to weight error and to activation-weighted error. Resumes if interrupted. | `results/activation_aware.csv` |
-| `experiments/cumulative.py` | Compresses blocks 2, 3, ..., 11 one after another with the two activation-weighted methods and measures perplexity after each block. Resumes if interrupted. | `results/cumulative.csv` |
-| `experiments/plot.py` | Draws every figure from the files in `results/`. | `figures/singular_value_spectra_original.png`, `figures/model_size_vs_perplexity_all_runs.png`, `figures/weight_error_fits/*.png`, `figures/activation_aware_fits/*.png` |
-
-## Results
-
-The results, the diagnostics and the conclusions drawn from them are in [`docs/RESULTS.md`](docs/RESULTS.md).
 
 ## Limits
 
-- `compress_gpt2.py` and `diagnostics.py` fit plain weight error ‖W − Ŵ‖_F. Only `activation_aware.py` fits the activation-weighted error, and its calibration activations come from the original model (errors in earlier layers are not fed forward). Nothing is fine-tuned after compression.
-- Only the MLP matrices are compressed; attention and embedding weights are untouched.
-- HadNet used the paper's settings unchanged (Adam, learning rate 0.1, 2000 epochs, ×0.1 after 100 epochs without improvement). They were not tuned for these matrices.
-- `hadnet_fit` returns the best factors seen, whereas the paper's Algorithm 7 and code return the last ones (see `docs/VERIFICATION.md`, note 1).
-- One model, one dataset, one run.
+- One model, one dataset; only the MLP weight matrices (45.5% of the model) are compressed.
+- HadNet uses the paper's settings unchanged (Adam, learning rate 0.1, 2000 steps); `hadnet_fit` returns the best factors seen, the paper's code the last ones.
+- Calibration inputs come from the original model, not from the partly compressed one. No fine-tuning.
 
-## Sources and acknowledgements
+## Sources
 
-- **The method.** A. Panchal, J. K. Sahoo, R. Behera, *Tensor decomposition and neural architectures through generalized Hadamard products*, Neurocomputing 699 (2026) 134372, <https://doi.org/10.1016/j.neucom.2026.134372>. Their code: <https://github.com/PanchalAneesh/HadNet-HadDNN>. `hadamard.py` is a re-implementation of the single-matrix case, written from the paper and checked against that code; no file is copied from it.
-- **Perplexity evaluation.** Hugging Face guide "Perplexity of fixed-length models", <https://huggingface.co/docs/transformers/perplexity>.
-- **Calibration activations and the output-error measure.** SVD-LLM (X. Wang, Y. Zheng, Z. Wan, M. Zhang, ICLR 2025, <https://openreview.net/forum?id=LNYIUouhdt>, code <https://github.com/AIoT-MLSys-Lab/SVD-LLM>) and ASVD (Z. Yuan et al., <https://arxiv.org/abs/2312.05821>).
-- **Model and data.** GPT-2 small (`gpt2`) and WikiText-2 (`Salesforce/wikitext`, `wikitext-2-raw-v1`), both loaded from the Hugging Face Hub.
-
-If you use this repository, please cite the paper above.
+- **Method:** Panchal, Sahoo, Behera, Neurocomputing 699 (2026) 134372, <https://doi.org/10.1016/j.neucom.2026.134372>; code <https://github.com/PanchalAneesh/HadNet-HadDNN>. `src/hadamard.py` re-implements the single-matrix case; no file is copied.
+- **Activation-aware fitting:** SVD-LLM (Wang, Zheng, Wan, Zhang, ICLR 2025, <https://openreview.net/forum?id=LNYIUouhdt>; code <https://github.com/AIoT-MLSys-Lab/SVD-LLM>) and ASVD (Yuan et al., <https://arxiv.org/abs/2312.05821>).
+- **Perplexity:** Hugging Face, "Perplexity of fixed-length models", <https://huggingface.co/docs/transformers/perplexity>.
+- **Model and data:** `gpt2` and `Salesforce/wikitext` (`wikitext-2-raw-v1`) from the Hugging Face Hub.

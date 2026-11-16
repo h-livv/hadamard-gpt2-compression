@@ -1,7 +1,7 @@
 """
 Activation-aware fitting, with blocks 0 and 1 left uncompressed.
 
-Two changes from compress_gpt2.py / diagnostics.py, suggested by RESULTS.md:
+Two changes from compress_gpt2.py / diagnostics.py, suggested by their results (docs/RESULTS.md):
   1. Blocks 0 and 1 are not compressed (they caused the six worst single-matrix
      runs in diagnostics.csv). Only the 20 MLP matrices of blocks 2-11 are.
   2. Besides the plain weight-error fits, each method is also fitted to the

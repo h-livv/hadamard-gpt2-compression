@@ -1,38 +1,34 @@
 """
-Plots from the output of compress_gpt2.py, diagnostics.py, activation_aware.py and cumulative.py. Run:  python experiments/plot.py
+Every figure, drawn from the files in results/. Run:  python experiments/plot.py
 
 Writes, under figures/:
-  singular_value_spectra_original.png
-        from results.csv / spectra.npz: sigma_i / sigma_1 of every original MLP matrix.
-  model_size_vs_perplexity_all_runs.png
-        every all-together run of every experiment: stored size of the whole model
-        (src/methods.py, model_megabytes) against perplexity.
-  weight_error_fits/      both methods fitted to plain weight error ||W - W_hat||_F
-    perplexity_vs_storage_all24_r8-64.png       all 24 matrices compressed (compress_gpt2.py)
-    perplexity_vs_storage_all24_r64-256.png     same, gentler budgets (diagnostics.py)
-    single_matrix_errors_vs_perplexity_r64-128.png
-                                                one matrix compressed at a time: weight and output
-                                                error against perplexity (diagnostics.py)
-  activation_aware_fits/  runs of activation_aware.py and cumulative.py (blocks 2-11 compressed)
-    perplexity_vs_storage_blocks2-11_weighted_vs_plain.png
-                                                the four fits (SVD / Hadamard x weight error /
-                                                activation-weighted), r = 64..256
-    cumulative_perplexity_by_block_r64-256.png  blocks 2, 3, ..., 11 compressed one after another
-    per_matrix_errors_by_block_r64-256.png      weight and output error of each compressed matrix,
-                                                activation-weighted fits only
+  singular_value_spectra_original.png          sigma_i / sigma_1 of every original MLP matrix (spectra.npz)
+  weight_error_fits/                           both methods fitted to plain weight error
+    perplexity_vs_storage_all24.png            all 24 matrices compressed, r = 8..256
+                                               (results.csv, diagnostics.csv)
+    single_matrix_damage_by_block.png          perplexity with ONE matrix compressed, by block and
+                                               matrix (diagnostics.csv)
+  activation_aware_fits/                       blocks 2-11 compressed (activation_aware.csv, cumulative.csv)
+    perplexity_vs_model_size_blocks2-11.png    the four fits against the stored size of the whole model
+    output_error_vs_perplexity_compressed_together.png
+                                               mean output error against perplexity, every run that
+                                               compresses many matrices at once (also diagnostics.csv)
+    per_matrix_errors_by_block_r64-256.png     weight and output error of each compressed matrix
+    cumulative_cost_per_block_r64-256.png      perplexity increase caused by each block as blocks
+                                               2, 3, ..., 11 are compressed one after another
 
 Source: matplotlib pyplot API, https://matplotlib.org/stable/api/pyplot_summary.html
 (plain plotting; no method from the paper is involved).
-Reads results/ and writes figures/ (locations in src/paths.py).
 """
 
 import csv
-import os
 import sys
 from pathlib import Path
 
 import matplotlib.pyplot as plt
 import numpy as np
+from matplotlib.colors import LogNorm
+from matplotlib.lines import Line2D
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))   # repository root, so `src` imports
 
@@ -42,99 +38,105 @@ from src.paths import FIGURES_DIR, RESULTS_DIR
 
 FULL_PARAMS = 768 * 3072         # numbers in one uncompressed MLP matrix
 COLORS = {"svd": "#2a78d6", "hadamard": "#eb6834"}           # blue, orange
-LABELS = {"svd": "Truncated SVD, rank 2r", "hadamard": "Hadamard (HadNet), rank r"}
 MARKERS = {"svd": "o", "hadamard": "s"}
+FAMILY = {"svd": "svd", "hadamard": "hadamard", "svd_w": "svd", "hadamard_w": "hadamard"}
+NAMES = {"svd": "SVD, weight error", "hadamard": "Hadamard, weight error",
+         "svd_w": "Whitened SVD (activation-weighted)", "hadamard_w": "Weighted Hadamard (activation-weighted)"}
+INK, MUTED, GRID = "#1f1e1c", "#52514e", "#e4e3df"
 
 
-def read_perplexities(filename, column):
-    """Read the all-matrices perplexity of every run into {(method, r): perplexity}.
+def share(r):
+    """Percent of one MLP matrix stored at rank r: 2r(m+n) / (m n)."""
+    return 100 * 2 * r * (768 + 3072) / FULL_PARAMS
 
-    Both CSV files have one row per compressed matrix; the perplexity of a run
-    is repeated on each of its rows, so later rows simply overwrite earlier ones.
 
-    Args: filename results/results.csv (column "perplexity") or
-          results/diagnostics.csv (column "perplexity_all").
-    """
+def style(ax):
+    """Recessive grid, no top/right spines."""
+    ax.grid(True, which="major", color=GRID, linewidth=0.8)
+    ax.spines[["top", "right"]].set_visible(False)
+
+
+def baseline_line(ax, baseline, text=None):
+    """Dashed line at the uncompressed perplexity, labelled at the right end, under the line."""
+    ax.axhline(baseline, color=MUTED, linewidth=1, linestyle="--")
+    ax.annotate(text or f"uncompressed: {baseline:.1f}", xy=(1, baseline), xycoords=("axes fraction", "data"),
+                xytext=(-4, -12), textcoords="offset points", ha="right", color=MUTED)
+
+
+def read_rows(name):
+    with open(RESULTS_DIR / name) as f:
+        return list(csv.DictReader(f))
+
+
+def plot_benchmark(baseline):
+    """All 24 matrices, weight-error fits: perplexity against share stored, r = 8..256 (log x: r doubles)."""
     table = {}
-    with open(filename) as f:
-        for row in csv.DictReader(f):
-            table[(row["method"], int(row["r"]))] = float(row[column])
-    return table
+    for row in read_rows("results.csv"):
+        if row["method"] != "baseline":
+            table[(row["method"], int(row["r"]))] = float(row["perplexity"])
+    for row in read_rows("diagnostics.csv"):               # r = 64 is in both files, with the same value
+        table[(row["method"], int(row["r"]))] = float(row["perplexity_all"])
 
-
-def plot_perplexity(table, baseline, filename):
-    """Perplexity (log scale) against the share of each MLP matrix that is stored.
-
-    Args: table {(method, r): perplexity}, baseline = uncompressed perplexity,
-          filename = path of the PNG to write.
-    """
-    fig, ax = plt.subplots(figsize=(7, 4.5))
-
-    ax.axhline(baseline, color="#52514e", linewidth=1, linestyle="--")
-    ax.annotate(f"uncompressed: {baseline:.1f}", xy=(0, baseline), xycoords=("axes fraction", "data"),
-                xytext=(4, 4), textcoords="offset points", ha="left", color="#52514e")
-
+    fig, ax = plt.subplots(figsize=(7.5, 4.6))
+    baseline_line(ax, baseline)
+    labels = {"svd": "Truncated SVD, rank 2r", "hadamard": "Hadamard (HadNet), rank r"}
     for method in ["svd", "hadamard"]:
         ranks = sorted(r for (name, r) in table if name == method)
-        budget = [100 * 2 * r * (768 + 3072) / FULL_PARAMS for r in ranks]   # 2r(m+n) as percent of full size
-        ppl = [table[(method, r)] for r in ranks]
-        ax.plot(budget, ppl, color=COLORS[method], marker=MARKERS[method], markersize=7,
-                linewidth=2, label=LABELS[method])
-
-    # Each r has one storage share, shared by both methods, so r is labelled once on the
-    # x-axis under its percentage instead of beside every point (where the labels collided).
+        ax.plot([share(r) for r in ranks], [table[(method, r)] for r in ranks], color=COLORS[method],
+                marker=MARKERS[method], markersize=7, linewidth=2, label=labels[method])
     ranks = sorted({r for (_, r) in table})
-    budget = [100 * 2 * r * (768 + 3072) / FULL_PARAMS for r in ranks]
-    ax.set_xticks(budget)
-    ax.set_xticklabels([f"{b:.1f}%\nr = {r}" for r, b in zip(ranks, budget)], fontsize=9)
+    ax.set_xscale("log")
+    ax.set_xticks([share(r) for r in ranks])
+    ax.set_xticklabels([f"{share(r):.1f}%\nr = {r}" for r in ranks], fontsize=8)
     ax.xaxis.set_minor_locator(plt.NullLocator())
-
-    # Perplexities span several orders of magnitude, hence the log axis.
     ax.set_yscale("log")
-    ax.set_xlabel("Share of each MLP matrix stored, 2r(m+n) / (768×3072); Hadamard rank r, SVD rank 2r")
+    ax.set_ylim(bottom=13)
+    ax.set_xlabel("Share of each MLP matrix stored (log scale)")
     ax.set_ylabel("WikiText-2 test perplexity (log scale)")
-    ax.set_title("GPT-2 small, all 24 MLP matrices compressed, equal parameter budget")
-    ax.grid(True, which="major", color="#e4e3df", linewidth=0.8)
-    ax.spines[["top", "right"]].set_visible(False)
-    ax.legend(frameon=False)
+    ax.set_title("All 24 MLP matrices compressed, weight-error fits, equal storage")
+    style(ax)
+    ax.legend(frameon=False, loc="upper right")
     fig.tight_layout()
-    fig.savefig(filename, dpi=150)
+    fig.savefig(FIGURES_DIR / "weight_error_fits/perplexity_vs_storage_all24.png", dpi=150)
+    plt.close(fig)
 
 
-def plot_error_vs_perplexity():
-    """One matrix compressed at a time: which error measure predicts the perplexity?
-
-    Left panel: relative weight error ||E||_F / ||W||_F on the x axis.
-    Right panel: relative output error ||X E||_F / ||X W||_F on calibration inputs.
-    Each point is one (matrix, r, method) run from Step 2.1 of diagnostics.py.
-    The legend gives each method's Spearman rank correlation with perplexity
-    (the same as with log perplexity, because log keeps the order).
-    """
-    runs = []
-    with open(RESULTS_DIR / "diagnostics.csv") as f:
-        for row in csv.DictReader(f):
-            if row["perplexity_single"] != "":               # only the single-matrix runs
-                runs.append(row)
-
-    fig, axes = plt.subplots(1, 2, figsize=(11, 4.5), sharey=True)
-    panels = [("weight_error", "Relative weight error  ‖E‖ / ‖W‖"),
-              ("output_error", "Relative output error  ‖XE‖ / ‖XW‖")]
-    for ax, (column, xlabel) in zip(axes, panels):
-        for method in ["svd", "hadamard"]:
-            x = [float(row[column]) for row in runs if row["method"] == method]
-            y = [float(row["perplexity_single"]) for row in runs if row["method"] == method]
-            ax.scatter(x, y, s=36, color=COLORS[method], marker=MARKERS[method], alpha=0.8,
-                       edgecolors="white", linewidths=0.6,
-                       label=f"{LABELS[method]} (Spearman {spearman(x, y):+.2f})")
-        ax.set_yscale("log")
-        ax.set_xlabel(xlabel)
-        ax.grid(True, which="major", color="#e4e3df", linewidth=0.8)
-        ax.spines[["top", "right"]].set_visible(False)
-        ax.legend(frameon=False, fontsize=8, loc="upper left")
-    axes[0].set_ylabel("Perplexity with this one matrix compressed (log scale)")
-    fig.suptitle("One MLP matrix compressed at a time (r = 64 and 128)")
-    fig.tight_layout()
-    fig.savefig(FIGURES_DIR / "weight_error_fits/single_matrix_errors_vs_perplexity_r64-128.png", dpi=150)
+def plot_single_matrix_damage(baseline):
+    """Heatmap: perplexity with only one matrix compressed, rows = block, columns = method x r."""
+    ppl = {}
+    for row in read_rows("diagnostics.csv"):
+        if row["perplexity_single"]:
+            ppl[(row["matrix"], row["method"], int(row["r"]), int(row["layer"]))] = float(row["perplexity_single"])
+    columns = [(m, r) for m in ["svd", "hadamard"] for r in sorted({r for (_, _, r, _) in ppl})]
+    vmax = max(ppl.values())
+    norm = LogNorm(vmin=baseline, vmax=vmax)
+    fig, axes = plt.subplots(1, 2, figsize=(8.5, 6.2), sharey=True)
+    for ax, name in zip(axes, ["c_fc", "c_proj"]):
+        grid = np.array([[ppl[(name, m, r, layer)] for (m, r) in columns] for layer in range(12)])
+        image = ax.imshow(grid, cmap="Blues", norm=norm, aspect="auto")
+        for i in range(12):
+            for j in range(len(columns)):
+                value = grid[i, j]
+                dark = norm(value) > 0.55
+                ax.text(j, i, f"{value:.1f}", ha="center", va="center", fontsize=8,
+                        color="white" if dark else INK)
+        ax.set_xticks(range(len(columns)))
+        ax.set_xticklabels([f"{'SVD' if m == 'svd' else 'Hadamard'}\nr = {r}" for m, r in columns], fontsize=8)
+        ax.set_yticks(range(12))
+        ax.set_title(f"mlp.{name} compressed alone")
+        ax.tick_params(length=0)
+        for side in ax.spines.values():
+            side.set_visible(False)
+    axes[0].set_ylabel("Block")
+    colorbar = fig.colorbar(image, ax=axes, pad=0.02, shrink=0.85)
+    ticks = [30, 40, 60, 100]
+    colorbar.set_ticks(ticks)
+    colorbar.set_ticklabels([str(t) for t in ticks])
+    colorbar.ax.yaxis.set_minor_formatter(plt.NullFormatter())
+    colorbar.set_label(f"Perplexity with only this matrix compressed (log; uncompressed {baseline:.2f})")
+    fig.suptitle("One matrix compressed at a time: the damage sits in blocks 0 and 1")
+    fig.savefig(FIGURES_DIR / "weight_error_fits/single_matrix_damage_by_block.png", dpi=150, bbox_inches="tight")
+    plt.close(fig)
 
 
 def plot_spectra():
@@ -151,8 +153,7 @@ def plot_spectra():
         ax.set_yscale("log")
         ax.set_xlabel("Singular value index i")
         ax.set_title(f"mlp.{name}")
-        ax.grid(True, which="major", color="#e4e3df", linewidth=0.8)
-        ax.spines[["top", "right"]].set_visible(False)
+        style(ax)
     axes[0].set_ylabel("σᵢ / σ₁ (log scale)")
 
     colorbar = fig.colorbar(plt.cm.ScalarMappable(cmap=plt.matplotlib.colors.ListedColormap(layer_colors),
@@ -161,97 +162,93 @@ def plot_spectra():
     colorbar.set_label("Transformer block (0 = first)")
     fig.suptitle("Normalised singular-value spectra of the GPT-2 small MLP matrices")
     fig.savefig(FIGURES_DIR / "singular_value_spectra_original.png", dpi=150, bbox_inches="tight")
+    plt.close(fig)
 
 
-# Activation-aware runs: color = method family, line style = fitting loss.
-FAMILY = {"svd": "svd", "hadamard": "hadamard", "svd_w": "svd", "hadamard_w": "hadamard"}
-AA_LABELS = {"svd": "SVD, weight error", "hadamard": "Hadamard, weight error",
-             "svd_w": "SVD, activation-weighted", "hadamard_w": "Hadamard, activation-weighted"}
-
-
-def plot_activation_aware(baseline):
-    """Perplexity (log) against the share of all MLP weights stored, for the four fits of activation_aware.py."""
-    table, share = {}, {}
-    with open(RESULTS_DIR / "activation_aware.csv") as f:
-        for row in csv.DictReader(f):
-            key = (row["method"], int(row["r"]))
-            table[key] = float(row["perplexity"])
-            share[key] = float(row["mlp_budget_percent"])
-    fig, ax = plt.subplots(figsize=(7, 4.5))
-    ax.axhline(baseline, color="#52514e", linewidth=1, linestyle="--")
-    ax.annotate(f"uncompressed: {baseline:.1f}", xy=(0, baseline), xycoords=("axes fraction", "data"),
-                xytext=(4, 4), textcoords="offset points", ha="left", color="#52514e")
+def plot_four_fits(baseline):
+    """Blocks 2-11: the four fits, perplexity against the stored size of the whole model."""
+    table = {(row["method"], int(row["r"])): float(row["perplexity"]) for row in read_rows("activation_aware.csv")}
+    ranks = sorted({r for (_, r) in table})
+    size = {r: model_megabytes(r, 20) for r in ranks}
+    full = model_megabytes(0, 0)
+    fig, ax = plt.subplots(figsize=(7.5, 4.6))
+    baseline_line(ax, baseline, f"uncompressed: {baseline:.1f} at {full:.0f} MB")
     for method in ["svd", "hadamard", "svd_w", "hadamard_w"]:
-        ranks = sorted(r for (name, r) in table if name == method)
-        x = [share[(method, r)] for r in ranks]
-        y = [table[(method, r)] for r in ranks]
         weighted = method.endswith("_w")
         color = COLORS[FAMILY[method]]
-        ax.plot(x, y, color=color, linewidth=2, linestyle="-" if weighted else (0, (4, 3)),
-                marker=MARKERS[FAMILY[method]], markersize=8,
-                markerfacecolor=color if weighted else "white", markeredgecolor=color, markeredgewidth=2,
-                label=AA_LABELS[method])
+        y = [table[(method, r)] for r in ranks]
+        ax.plot([size[r] for r in ranks], y, color=color, linewidth=2, linestyle="-" if weighted else (0, (4, 3)),
+                marker=MARKERS[FAMILY[method]], markersize=8, markerfacecolor=color if weighted else "white",
+                markeredgecolor=color, markeredgewidth=2, label=NAMES[method])
         nudge = {"hadamard": -6, "hadamard_w": 6}.get(method, 0)  # end labels 38.5 / 41.9 sit close together
-        ax.annotate(f"{y[-1]:.1f}", xy=(x[-1], y[-1]), xytext=(6, nudge), textcoords="offset points",
-                    va="center", fontsize=9, color="#1f1e1c")
+        ax.annotate(f"{y[-1]:.1f}", xy=(size[ranks[-1]], y[-1]), xytext=(6, nudge), textcoords="offset points",
+                    va="center", fontsize=9, color=INK)
+    ax.set_xticks([size[r] for r in ranks])
+    ax.set_xticklabels([f"{size[r]:.0f} MB ({100 * model_params(r, 20) / GPT2_TOTAL_PARAMS:.0f}%)\nr = {r}"
+                        for r in ranks], fontsize=8)
+    ax.set_xlim(size[ranks[0]] - 10, size[ranks[-1]] + 18)
     ax.set_yscale("log")
-    ax.set_xlabel("Share of all MLP weights stored (%); blocks 0-1 kept whole")
+    ax.set_ylim(bottom=18)
+    ax.set_xlabel(f"Stored size of the whole model (float32; original {full:.1f} MB); blocks 0-1 kept whole")
     ax.set_ylabel("WikiText-2 test perplexity (log scale)")
     ax.set_title("Blocks 2-11 compressed: weight-error vs activation-weighted fits")
-    ax.grid(True, which="major", color="#e4e3df", linewidth=0.8)
-    for side in ["top", "right"]:
-        ax.spines[side].set_visible(False)
-    ax.legend(frameon=False, fontsize=9)
+    style(ax)
+    ax.legend(frameon=False, fontsize=8, loc="upper right")
     fig.tight_layout()
-    fig.savefig(FIGURES_DIR / "activation_aware_fits/perplexity_vs_storage_blocks2-11_weighted_vs_plain.png", dpi=150)
+    fig.savefig(FIGURES_DIR / "activation_aware_fits/perplexity_vs_model_size_blocks2-11.png", dpi=150)
     plt.close(fig)
 
 
-RANK_STYLES = {64: (0, (1, 2)), 128: (0, (4, 3)), 256: "-"}   # dotted, dashed, solid
+def run_means(rows, ppl_column):
+    """{(method, r): (mean output error over the run's matrices, perplexity)} for all-together runs."""
+    groups = {}
+    for row in rows:
+        groups.setdefault((row["method"], int(row["r"])), []).append(row)
+    return {key: (np.mean([float(row["output_error"]) for row in group]), float(group[0][ppl_column]))
+            for key, group in groups.items()}
 
 
-def plot_cumulative(baseline):
-    """Perplexity (log) as blocks 2..11 are compressed one after another (cumulative.py)."""
-    series = {}
-    with open(RESULTS_DIR / "cumulative.csv") as f:
-        for row in csv.DictReader(f):
-            series.setdefault((row["method"], int(row["r"])), []).append(
-                (int(row["last_block"]), float(row["perplexity"])))
-    fig, ax = plt.subplots(figsize=(7, 4.5))
-    ax.axhline(baseline, color="#52514e", linewidth=1, linestyle="--")
-    ax.annotate(f"uncompressed: {baseline:.1f}", xy=(1, baseline), xycoords=("axes fraction", "data"),
-                xytext=(-4, -12), textcoords="offset points", ha="right", color="#52514e")
-    for (method, r), points in sorted(series.items(), key=lambda kv: (kv[0][1], kv[0][0])):
-        points.sort()
-        x = [1] + [layer for layer, _ in points]                     # x = 1: nothing compressed yet
-        y = [baseline] + [ppl for _, ppl in points]
-        color = COLORS[FAMILY[method]]
-        style = RANK_STYLES.get(r, "-")                               # line style encodes r
-        filled = r == max(rr for (_, rr) in series)                   # largest r: filled markers
-        ax.plot(x, y, color=color, linewidth=2, linestyle=style,
-                marker=MARKERS[FAMILY[method]], markersize=7,
-                markerfacecolor=color if filled else "white", markeredgecolor=color, markeredgewidth=2,
-                label=f"{'SVD' if FAMILY[method] == 'svd' else 'Hadamard'}, activation-weighted, r = {r}")
-        ax.annotate(f"{y[-1]:.1f}", xy=(x[-1], y[-1]), xytext=(6, 0), textcoords="offset points",
-                    va="center", fontsize=9, color="#1f1e1c")
-    ax.set_yscale("log")
-    ticks = [25, 30, 40, 60, 100, 150, 250]                            # plain numbers, not 2x10^2
-    ax.set_ylim(bottom=22)                                             # room for the baseline label below the line
-    ax.set_yticks(ticks)
-    ax.set_yticklabels([str(t) for t in ticks])
-    ax.yaxis.set_minor_formatter(plt.NullFormatter())
-    ax.set_xticks(range(1, 12))
-    ax.set_xticklabels(["none"] + [f"2..{b}" for b in range(2, 12)], fontsize=8)
-    ax.set_xlabel("Blocks whose MLP matrices are compressed")
-    ax.set_ylabel("WikiText-2 test perplexity (log scale)")
-    ax.set_title("How the damage accumulates, block by block")
-    ax.grid(True, which="major", color="#e4e3df", linewidth=0.8)
-    for side in ["top", "right"]:
-        ax.spines[side].set_visible(False)
-    ax.legend(frameon=False, fontsize=9)
-    fig.tight_layout()
-    fig.savefig(FIGURES_DIR / "activation_aware_fits/cumulative_perplexity_by_block_r64-256.png", dpi=150)
+def plot_output_error_vs_perplexity(baseline):
+    """Mean output error against perplexity, for every run that compresses many matrices at once.
+
+    Left: all 24 matrices, weight-error fits (diagnostics.csv). Right: blocks 2-11, four fits
+    (activation_aware.csv). The title of each panel gives the Spearman rank correlation.
+    Returns {panel: Spearman} so the numbers can be quoted.
+    """
+    panels = [("All 24 matrices, weight-error fits", run_means(read_rows("diagnostics.csv"), "perplexity_all")),
+              ("Blocks 2-11, four fits", run_means(read_rows("activation_aware.csv"), "perplexity"))]
+    correlations = {}
+    fig, axes = plt.subplots(1, 2, figsize=(10, 4.6), sharey=True)
+    for ax, (title, runs) in zip(axes, panels):
+        baseline_line(ax, baseline)
+        for method in ["svd", "hadamard", "svd_w", "hadamard_w"]:
+            points = sorted((r, err, ppl) for (m, r), (err, ppl) in runs.items() if m == method)
+            if not points:
+                continue
+            color = COLORS[FAMILY[method]]
+            weighted = method.endswith("_w")
+            ax.scatter([p[1] for p in points], [p[2] for p in points], s=70, marker=MARKERS[FAMILY[method]],
+                       color=color if weighted else "white", edgecolors=color, linewidths=2, label=NAMES[method],
+                       zorder=3)
+        errors = [v[0] for v in runs.values()]
+        ppls = [v[1] for v in runs.values()]
+        correlations[title] = spearman(errors, ppls)
+        ax.set_title(f"{title}\nSpearman {correlations[title]:+.2f} over {len(runs)} runs", fontsize=10)
+        ax.set_yscale("log")
+        ax.set_ylim(bottom=13)
+        ax.set_xlabel("Mean output error  ‖XE‖ / ‖XW‖ over the compressed matrices")
+        style(ax)
+    axes[0].set_ylabel("WikiText-2 test perplexity (log scale)")
+    handles = {}
+    for ax in axes:
+        for handle, label in zip(*ax.get_legend_handles_labels()):
+            handles.setdefault(label, handle)
+    fig.legend(handles.values(), handles.keys(), loc="lower center", ncol=2, frameon=False, fontsize=8)
+    fig.suptitle("Many matrices compressed together: output error predicts perplexity (each point one run; r = 64..256)")
+    fig.tight_layout(rect=(0, 0.1, 1, 1))
+    fig.savefig(FIGURES_DIR / "activation_aware_fits/output_error_vs_perplexity_compressed_together.png", dpi=150)
     plt.close(fig)
+    return correlations
 
 
 def plot_per_matrix_errors():
@@ -261,11 +258,10 @@ def plot_per_matrix_errors():
     Only errors are shown; no single-matrix perplexity was measured for these fits.
     """
     data = {}
-    with open(RESULTS_DIR / "activation_aware.csv") as f:
-        for row in csv.DictReader(f):
-            if row["method"] in ("svd_w", "hadamard_w"):
-                data[(row["method"], int(row["r"]), row["matrix"], int(row["layer"]))] = (
-                    float(row["weight_error"]), float(row["output_error"]))
+    for row in read_rows("activation_aware.csv"):
+        if row["method"] in ("svd_w", "hadamard_w"):
+            data[(row["method"], int(row["r"]), row["matrix"], int(row["layer"]))] = (
+                float(row["weight_error"]), float(row["output_error"]))
     ranks = sorted({r for (_, r, _, _) in data})
     blocks = sorted({b for (_, _, _, b) in data})
     fig, axes = plt.subplots(2, len(ranks), figsize=(3.6 * len(ranks), 6.2), sharex=True, sharey=True)
@@ -276,125 +272,74 @@ def plot_per_matrix_errors():
                 color = COLORS[FAMILY[method]]
                 weight = [data[(method, r, name, b)][0] for b in blocks]
                 output = [data[(method, r, name, b)][1] for b in blocks]
-                ax.plot(blocks, output, color=color, linewidth=2, marker=MARKERS[FAMILY[method]], markersize=6,
-                        label=f"{AA_LABELS[method]}: output error")
+                ax.plot(blocks, output, color=color, linewidth=2, marker=MARKERS[FAMILY[method]], markersize=6)
                 ax.plot(blocks, weight, color=color, linewidth=1.5, linestyle=(0, (4, 3)),
                         marker=MARKERS[FAMILY[method]], markersize=6, markerfacecolor="white",
-                        markeredgecolor=color, markeredgewidth=1.5,
-                        label=f"{AA_LABELS[method]}: weight error")
+                        markeredgecolor=color, markeredgewidth=1.5)
             ax.set_ylim(0, 1)
             ax.set_xticks(blocks)
-            ax.grid(True, color="#e4e3df", linewidth=0.8)
-            for side in ["top", "right"]:
-                ax.spines[side].set_visible(False)
+            style(ax)
             if i == 0:
-                share = 100 * 2 * r * (768 + 3072) / FULL_PARAMS
-                ax.set_title(f"r = {r}  ({share:.1f}% of each matrix)", fontsize=10)
+                ax.set_title(f"r = {r}  ({share(r):.1f}% of each matrix)", fontsize=10)
             if j == 0:
                 ax.set_ylabel(f"{name}: relative error")
             if i == 1:
                 ax.set_xlabel("Block")
-    handles, labels = axes[0, 0].get_legend_handles_labels()
-    fig.legend(handles, labels, loc="lower center", ncol=2, frameon=False, fontsize=9)
-    fig.suptitle("Each compressed MLP matrix: error of the activation-weighted fits (blocks 2-11)", fontsize=11)
-    fig.tight_layout(rect=(0, 0.1, 1, 1))
+    # Two-part legend: color = method, line style = which error is measured.
+    handles = [Line2D([], [], color=COLORS["svd"], linewidth=2, marker="o", label="Whitened SVD"),
+               Line2D([], [], color=COLORS["hadamard"], linewidth=2, marker="s", label="Weighted Hadamard"),
+               Line2D([], [], color=MUTED, linewidth=2, marker="o", label="Output error  ‖X(W − Ŵ)‖ / ‖XW‖"),
+               Line2D([], [], color=MUTED, linewidth=1.5, linestyle=(0, (4, 3)), marker="o", markerfacecolor="white",
+                      markeredgewidth=1.5, label="Weight error  ‖W − Ŵ‖ / ‖W‖")]
+    fig.legend(handles=handles, loc="lower center", ncol=4, frameon=False, fontsize=9)
+    fig.suptitle("Each compressed MLP matrix: error of the two activation-weighted fits (blocks 2-11)", fontsize=11)
+    fig.tight_layout(rect=(0, 0.05, 1, 1))
     fig.savefig(FIGURES_DIR / "activation_aware_fits/per_matrix_errors_by_block_r64-256.png", dpi=150)
     plt.close(fig)
 
 
-def size_table():
-    """Every all-together run of every experiment, with its stored size.
-
-    Returns: list of dict(setting, method, r, n_compressed, megabytes, percent, perplexity).
-    settings: "all24_weight"   all 24 matrices, weight-error fits (results.csv r = 8..64,
-                               diagnostics.csv r = 64..256; r = 64 is in both, with the same value)
-              "b2-11_weight"   blocks 2-11, weight-error fits (activation_aware.csv)
-              "b2-11_weighted" blocks 2-11, activation-weighted fits (activation_aware.csv)
-    """
-    runs = {}
-    with open(RESULTS_DIR / "results.csv") as f:
-        for row in csv.DictReader(f):
-            if row["method"] != "baseline":
-                runs[("all24_weight", row["method"], int(row["r"]))] = (24, float(row["perplexity"]))
-    with open(RESULTS_DIR / "diagnostics.csv") as f:
-        for row in csv.DictReader(f):
-            runs[("all24_weight", row["method"], int(row["r"]))] = (24, float(row["perplexity_all"]))
-    with open(RESULTS_DIR / "activation_aware.csv") as f:
-        for row in csv.DictReader(f):
-            setting = "b2-11_weighted" if row["method"].endswith("_w") else "b2-11_weight"
-            runs[(setting, FAMILY[row["method"]], int(row["r"]))] = (20, float(row["perplexity"]))
-    table = []
-    for (setting, method, r), (n, ppl) in sorted(runs.items()):
-        table.append(dict(setting=setting, method=method, r=r, n_compressed=n,
-                          megabytes=model_megabytes(r, n),
-                          percent=100 * model_params(r, n) / GPT2_TOTAL_PARAMS, perplexity=ppl))
-    return table
-
-
-SETTING_STYLES = {   # line style, filled markers, label
-    "all24_weight": ((0, (1, 2)), False, "all 24 matrices, weight-error fit"),
-    "b2-11_weight": ((0, (4, 3)), False, "blocks 2-11, weight-error fit"),
-    "b2-11_weighted": ("-", True, "blocks 2-11, activation-weighted fit"),
-}
-
-
-def plot_size_vs_perplexity(baseline):
-    """Perplexity (log) against the stored size of the whole model, for every all-together run."""
-    table = size_table()
-    full_mb = model_megabytes(0, 0)
-    fig, ax = plt.subplots(figsize=(8, 5))
-    ax.axhline(baseline, color="#52514e", linewidth=1, linestyle="--")
-    ax.annotate(f"uncompressed: {baseline:.1f} at {full_mb:.0f} MB", xy=(0, baseline),
-                xycoords=("axes fraction", "data"), xytext=(4, 4), textcoords="offset points",
-                ha="left", color="#52514e")
-    for setting, (style, filled, label) in SETTING_STYLES.items():
-        for method in ["svd", "hadamard"]:
-            rows = sorted((t for t in table if t["setting"] == setting and t["method"] == method),
-                          key=lambda t: t["percent"])
-            color = COLORS[method]
-            name = {"svd": "SVD", "hadamard": "Hadamard"}[method]
-            if setting == "b2-11_weighted":
-                name = {"svd": "Whitened SVD", "hadamard": "Weighted Hadamard"}[method]
-            ax.plot([t["percent"] for t in rows], [t["perplexity"] for t in rows], color=color,
-                    linewidth=2, linestyle=style, marker=MARKERS[method], markersize=7,
-                    markerfacecolor=color if filled else "white", markeredgecolor=color,
-                    markeredgewidth=2, label=f"{name}, {label}")
-    ax.set_yscale("log")
-    ax.set_xlabel(f"Stored size of the whole model, % of the original {full_mb:.1f} MB (float32)")
-    ax.set_ylabel("WikiText-2 test perplexity (log scale)")
-    ax.set_title("Model size against perplexity, every run (Hadamard rank r, SVD rank 2r)")
-    ax.grid(True, which="major", color="#e4e3df", linewidth=0.8)
-    for side in ["top", "right"]:
-        ax.spines[side].set_visible(False)
-    ax.legend(frameon=False, fontsize=8, loc="upper right")
-    fig.tight_layout()
-    fig.savefig(FIGURES_DIR / "model_size_vs_perplexity_all_runs.png", dpi=150)
+def plot_cumulative_cost(baseline):
+    """Bars: % increase in perplexity when each block is added (cumulative.py), one panel per r."""
+    series = {}
+    for row in read_rows("cumulative.csv"):
+        series.setdefault((row["method"], int(row["r"])), {})[int(row["last_block"])] = float(row["perplexity"])
+    ranks = sorted({r for (_, r) in series})
+    fig, axes = plt.subplots(1, len(ranks), figsize=(4.2 * len(ranks), 4.2), sharex=True)
+    width = 0.4
+    for ax, r in zip(axes, ranks):
+        ax.axvspan(2.5, 8.5, color="#f0efec", zorder=0)
+        for k, method in enumerate(["svd_w", "hadamard_w"]):
+            ppl = series[(method, r)]
+            blocks = sorted(ppl)
+            previous = [baseline] + [ppl[b] for b in blocks[:-1]]
+            cost = [100 * (ppl[b] / p - 1) for b, p in zip(blocks, previous)]
+            ax.bar([b + (k - 0.5) * width for b in blocks], cost, width=width * 0.9, color=COLORS[FAMILY[method]],
+                   label={"svd_w": "Whitened SVD", "hadamard_w": "Weighted Hadamard"}[method], zorder=2)
+        ax.set_title(f"r = {r}   (final perplexity {series[('svd_w', r)][11]:.1f} vs "
+                     f"{series[('hadamard_w', r)][11]:.1f})", fontsize=10)
+        ax.set_xticks(range(2, 12))
+        ax.set_xlabel("Block added")
+        ax.grid(True, axis="y", color=GRID, linewidth=0.8)
+        ax.spines[["top", "right"]].set_visible(False)
+    axes[0].set_ylabel("Perplexity increase when the block is added (%)")
+    handles, labels = axes[0].get_legend_handles_labels()
+    fig.legend(handles, labels, loc="lower center", ncol=2, frameon=False, fontsize=9)
+    fig.suptitle("Compressing blocks 2, 3, ..., 11 one after another: what each block costs (shaded: blocks 3-8)")
+    fig.tight_layout(rect=(0, 0.08, 1, 1))
+    fig.savefig(FIGURES_DIR / "activation_aware_fits/cumulative_cost_per_block_r64-256.png", dpi=150)
     plt.close(fig)
 
 
 if __name__ == "__main__":
     for folder in ["weight_error_fits", "activation_aware_fits"]:
         (FIGURES_DIR / folder).mkdir(parents=True, exist_ok=True)
-    harsh = read_perplexities(RESULTS_DIR / "results.csv", "perplexity")
-    baseline = harsh[("baseline", 0)]
-    del harsh[("baseline", 0)]
-    plot_perplexity(harsh, baseline, FIGURES_DIR / "weight_error_fits/perplexity_vs_storage_all24_r8-64.png")
+    baseline = next(float(row["perplexity"]) for row in read_rows("results.csv") if row["method"] == "baseline")
     plot_spectra()
-    print("wrote the all-24 r = 8..64 perplexity plot and the spectra")
-
-    # Each later experiment is a separate run; plot it only if its results exist.
-    if os.path.exists(RESULTS_DIR / "diagnostics.csv"):
-        plot_perplexity(read_perplexities(RESULTS_DIR / "diagnostics.csv", "perplexity_all"),
-                        baseline, FIGURES_DIR / "weight_error_fits/perplexity_vs_storage_all24_r64-256.png")
-        plot_error_vs_perplexity()
-        print("wrote the r = 64..256 perplexity plot and the single-matrix error plot")
-    for csv_name, plot in [("activation_aware.csv", plot_activation_aware), ("cumulative.csv", plot_cumulative)]:
-        if os.path.exists(RESULTS_DIR / csv_name):
-            plot(baseline)
-            print(f"wrote the {csv_name.replace('.csv', '')} plot")
-    if os.path.exists(RESULTS_DIR / "activation_aware.csv"):
-        plot_per_matrix_errors()
-        print("wrote the per-matrix error plot")
-    if os.path.exists(RESULTS_DIR / "diagnostics.csv") and os.path.exists(RESULTS_DIR / "activation_aware.csv"):
-        plot_size_vs_perplexity(baseline)
-        print("wrote the model size plot")
+    plot_benchmark(baseline)
+    plot_single_matrix_damage(baseline)
+    plot_four_fits(baseline)
+    for panel, rho in plot_output_error_vs_perplexity(baseline).items():
+        print(f"Spearman, mean output error vs perplexity, {panel}: {rho:+.2f}")
+    plot_per_matrix_errors()
+    plot_cumulative_cost(baseline)
+    print("wrote every figure")

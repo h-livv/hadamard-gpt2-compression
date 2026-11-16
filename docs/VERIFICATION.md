@@ -92,7 +92,7 @@ The paper is written for tensors and treats each matrix slice independently (its
 
 | Function | What it does | Source | Difference |
 |---|---|---|---|
-| `read_perplexities`, `plot_perplexity`, `plot_spectra`, `plot_error_vs_perplexity`, `plot_activation_aware`, `plot_cumulative`, `plot_per_matrix_errors`, `size_table`, `plot_size_vs_perplexity` | Read the files in `results/` and draw the eight figures in `figures/` (the spectra and the model-size plot at the top level, the rest in `weight_error_fits/` and `activation_aware_fits/`). | matplotlib pyplot API, <https://matplotlib.org/stable/api/pyplot_summary.html>. | Plotting only; no method from the paper. |
+| `plot_spectra`, `plot_benchmark`, `plot_single_matrix_damage`, `plot_four_fits`, `plot_output_error_vs_perplexity`, `plot_per_matrix_errors`, `plot_cumulative_cost` | Read the files in `results/` and draw the seven figures in `figures/`. `plot_output_error_vs_perplexity` also prints the Spearman correlation of each panel. | matplotlib pyplot API, <https://matplotlib.org/stable/api/pyplot_summary.html>. | Plotting only; no method from the paper. |
 
 ## `tests/checks.py`
 
