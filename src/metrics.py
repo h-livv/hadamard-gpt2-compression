@@ -2,6 +2,7 @@
 Error measures and statistics used to compare an approximation W_hat with W.
 
 Pure functions of tensors and arrays; nothing here knows about GPT-2.
+relative_weighted_error, psnr and condition_number serve stage 5.
 """
 
 import numpy as np
@@ -82,3 +83,36 @@ def spearman(a, b):
     rank_a = np.argsort(np.argsort(a))                           # (len,) rank of each a[i], 0 = smallest
     rank_b = np.argsort(np.argsort(b))                           # (len,)
     return float(np.corrcoef(rank_a, rank_b)[0, 1])
+
+
+def relative_weighted_error(A, A_hat, G):
+    """Relative weighted error ||S^T (A - A_hat)||_F / ||S^T A||_F with G = S S^T on the row index.
+
+    Same quantity as output_error (there G = X^T X); written for any G.
+    Args:    A, A_hat (m, n), G (m, m).  Returns: float.
+    Source:  hadamard.weighted_error (SVD-LLM Eq. 1 with the Gram matrix).
+    """
+    A, A_hat, G = A.double(), A_hat.double(), G.double()
+    E = A - A_hat
+    return torch.sqrt(torch.sum(E * (G @ E)) / torch.sum(A * (G @ A))).item()
+
+
+def psnr(A, A_hat):
+    """PSNR = 10 log10(1 / MSE) in dB, for pixel values on [0, 1], no clipping of A_hat.
+
+    Args:    A, A_hat (m, n).  Returns: float.
+    Source:  paper §6 (performance measures): PSNR = 10 log10(MPP / MSE), MPP the
+             maximum possible pixel value. MPP = 1 here, so MPP and MPP^2 (the
+             usual definition) agree.
+    """
+    mse = torch.mean((A.double() - A_hat.double()) ** 2).item()
+    return 10.0 * np.log10(1.0 / mse)
+
+
+def condition_number(G):
+    """lambda_max / lambda_min of a symmetric positive definite G (float64 eigvalsh).
+
+    Source:  torch.linalg.eigvalsh, https://pytorch.org/docs/stable/generated/torch.linalg.eigvalsh.html
+    """
+    lam = torch.linalg.eigvalsh(G.double())                      # ascending
+    return (lam[-1] / lam[0]).item()

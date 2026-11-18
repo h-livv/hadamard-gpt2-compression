@@ -191,3 +191,4 @@ def collect_gram_matrices(model, calibration_ids):
             grams[(layer, name)] = conv1d.G                      # (in, in)
             del conv1d.G
     return grams
+

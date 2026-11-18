@@ -1,5 +1,5 @@
 """
-Diagnostics: why did a lower weight error give a worse perplexity?
+Stage 2, diagnostics: why did a lower weight error give a worse perplexity (stage 1)?
 
 Three hypotheses are measured here. Nothing is fitted differently.
   H3 (bug)             the compressed weight in the model is not the one we fitted.
@@ -18,10 +18,12 @@ ORIENTATION. In this file W, W_hat and E = W - W_hat are in GPT-2's own
 X (tokens, in_features). `get_weight` returns the transposed (out, in) layout,
 so we transpose once, right after calling it.
 
-Run:  python experiments/diagnostics.py      (writes results/diagnostics.csv; about 75 minutes on an RTX 4050)
-"""
+Reads     GPT-2 small and WikiText-2 from the Hugging Face Hub (cached after first use).
+Writes    results/stage2/diagnostics.csv  one row per (method, r, matrix); the bug check is printed only
+Runtime   about 75 minutes on an RTX 4050 laptop GPU.
 
-import csv
+Run:  python experiments/stage2_diagnostics.py
+"""
 
 import sys
 from pathlib import Path
@@ -36,7 +38,7 @@ from src.gpt2 import (DEVICE, LAYERS, MATRICES, SEED, collect_gram_matrices, get
                                      load_calibration_tokens, load_test_tokens, perplexity, set_weight)
 from src.methods import compress_matrix
 from src.metrics import entry_stats, output_error, relative_error
-from src.paths import RESULTS_DIR
+from src.paths import RESULTS_DIR, write_csv
 
 
 # ---- settings -------------------------------------------------------------
@@ -65,7 +67,7 @@ def bug_check(model, input_ids):
     Returns: list of dict rows (matrix, method, r, error_before, error_read_back, perplexity).
     Source:  Conv1D.forward in transformers/pytorch_utils.py
              (`torch.addmm(self.bias, x.view(-1, x.size(-1)), self.weight)`) for the
-             forward identity; get_weight / set_weight / perplexity as in VERIFICATION.md.
+             forward identity; get_weight / set_weight / perplexity from src/gpt2.py.
     """
     rows = []
     for layer, name in BUG_CHECK_MATRICES:
@@ -96,14 +98,6 @@ def bug_check(model, input_ids):
             print(f"h[{layer}].mlp.{name}  {method:9s} rank {rank:3d}  error before {error_before:.6f}  "
                   f"read back {error_read_back:.6f}  perplexity {ppl:.2f}", flush=True)
     return rows
-
-
-def save_rows(rows):
-    """Write all rows collected so far to diagnostics.csv (rewritten after every run)."""
-    with open(RESULTS_DIR / "diagnostics.csv", "w", newline="") as f:
-        writer = csv.DictWriter(f, fieldnames=list(rows[0].keys()))
-        writer.writeheader()
-        writer.writerows(rows)
 
 
 if __name__ == "__main__":
@@ -159,7 +153,7 @@ if __name__ == "__main__":
             for row in new_rows:
                 row["perplexity_all"] = ppl_all                  # same value on all 24 rows of this run
             rows.extend(new_rows)
-            save_rows(rows)
+            write_csv(rows, RESULTS_DIR / "stage2" / "diagnostics.csv")
             print(f"{method:9s} r={r:3d} all 24 matrices: perplexity {ppl_all:.2f}  "
                   f"mean weight error {np.mean([row['weight_error'] for row in new_rows]):.4f}  "
                   f"mean output error {np.mean([row['output_error'] for row in new_rows]):.4f}", flush=True)

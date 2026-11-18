@@ -61,47 +61,60 @@ def reconstruct(W1, H1, W2, H2):
 
 
 def weighted_error(E, G):
-    """Activation-weighted error ||E X^T||_F for E (out, in) and G = X^T X (in, in).
+    """Weighted error ||S^T E||_F = sqrt(trace(E^T G E)) for E (m, n) and G = S S^T (m, m).
 
-    X is the (tokens, in) matrix of the layer's real inputs. In the (out, in)
-    layout the layer's output error on those inputs is E X^T, and
-        ||E X^T||_F^2 = trace(E X^T X E^T) = trace(E G E^T) = sum(E * (E @ G)).
-    With G = I this is the plain Frobenius norm ||E||_F.
+    G acts on the ROW index of E (docs/REPORT.md, Background). In GPT-2's
+    layout W (in, out) with layer inputs X (tokens, in), G = X^T X and
+        ||X E||_F^2 = trace(E^T X^T X E) = trace(E^T G E) = sum(E * (G @ E)),
+    i.e. the error of the layer's output on those inputs. With G = I this is
+    the plain Frobenius norm ||E||_F.
 
-    Args:    E (out, in), G (in, in) symmetric positive semidefinite.
+    Args:    E (m, n), G (m, m) symmetric positive semidefinite.
     Returns: scalar tensor (differentiable).
-    Source:  the loss ||W X - W' X||_F of SVD-LLM (Wang et al., ICLR 2025) and
-             ASVD (Yuan et al., arXiv:2312.05821), written with the Gram matrix.
+    Source:  the loss ||W X - W' X||_F of SVD-LLM (Wang et al., ICLR 2025,
+             arXiv:2403.07378, Eq. 1), written with the Gram matrix; the trace
+             identity is SVD-LLM's Lemma 3.1 (Eq. 2). Checked in tests/checks.py.
+    Differs: stages 3 and 4 were run with G on the column index of an (out, in)
+             matrix. Same quantity for the transposed matrix; the row form lets
+             images and GPT-2's native (in, out) layout be used without transposes.
     """
-    return torch.sqrt(torch.sum(E * (E @ G)))
+    return torch.sqrt(torch.sum(E * (G @ E)))
 
 
-def hadnet_fit(X, r, max_epochs=2000, lr=0.1, patience=100, G=None):
+def hadnet_fit(X, r, max_epochs=2000, lr=0.1, patience=100, G=None, init=None):
     """Fit the Hadamard decomposition of X with HadNet (paper §4.1, Algorithm 7).
 
     HadNet has no layers: the four factors are the trainable parameters and
     Adam minimises the Frobenius norm ||X - X_pred||_F (the norm itself, not
-    its square) on the whole matrix at once, so one "epoch" is one Adam step.
-    Nothing here is random: the start is `svd_init` and there are no batches.
+    its square; paper Eq. 6) on the whole matrix at once, so one "epoch" is
+    one Adam step. Nothing here is random: the start is `svd_init` (or `init`)
+    and there are no batches.
 
     Defaults are the paper's (§5): lr 0.1, 2000 epochs, patience ("wait") 100.
 
     Args:    X (m, n), r with 1 <= r <= min(m, n).
-             G (n, n) optional. If given, the loss is the activation-weighted
-             error weighted_error(X - X_pred, G) instead of ||X - X_pred||_F
-             (X is then a weight in the (out, in) layout and G the Gram matrix
-             of the layer's inputs). Everything else is unchanged.
+             G (m, m) optional. If given, the loss is the weighted error
+             weighted_error(X - X_pred, G) = ||S^T (X - X_pred)||_F instead of
+             ||X - X_pred||_F. Everything else is unchanged. (This project's
+             extension, not in the paper.)
+             init optional (W1, H1, W2, H2) to start from instead of
+             svd_init(X, r); copied, never modified. (This project's extension,
+             used for the warm-start and embedding starts of REPORT stage 5.3.)
     Returns: W1 (m, r), H1 (r, n), W2 (m, r), H2 (r, n), hist
              The factors are the best ones seen (lowest loss).
              hist is a list of max_epochs floats, the loss at each epoch;
-             hist[0] is the loss of the SVD initialisation and min(hist) is
+             hist[0] is the loss of the starting factors and min(hist) is
              the loss of the returned factors.
-    Source:  paper Algorithm 7; repo function `HadamardNet_train`.
-    Differs: Algorithm 7 and the repo return the factors after the LAST
-             epoch. We return the BEST ones (project requirement). See
-             VERIFICATION.md.
+    Source:  paper Algorithm 7; repo random-tensor/main.py `HadamardNet_train`
+             (lines 89-125 at commit 4aabe3d).
+    Differs: Algorithm 7 (line 21) and the repo return the factors after the
+             LAST epoch. We return the BEST ones (project requirement). The
+             repo's extra `updatecount == 100` test (line 113) is dead code.
     """
-    W1, H1, W2, H2 = svd_init(X, r)                          # (m, r), (r, n), (m, r), (r, n)
+    if init is None:
+        W1, H1, W2, H2 = svd_init(X, r)                      # (m, r), (r, n), (m, r), (r, n)
+    else:
+        W1, H1, W2, H2 = [f.detach().clone() for f in init]
     params = [W1, H1, W2, H2]
     for p in params:
         p.requires_grad_(True)
@@ -164,25 +177,60 @@ def svd_truncate(X, k):
 
 
 def whitened_svd(X, k, G):
-    """Rank-k approximation minimising the activation-weighted error (SVD-LLM's truncation-aware whitening).
+    """Rank-k approximation minimising the weighted error ||S^T (X - X_hat)||_F (SVD-LLM's whitening).
 
-    Write G = S S^T. Then weighted_error(E, G) = ||E S||_F, so the best rank-k
-    X_hat in that error is X_hat = [X S]_k S^{-1}, where [.]_k is the truncated
-    SVD (Eckart-Young applied to X S). S comes from an eigendecomposition
-    G = Q diag(lam) Q^T, S = Q diag(sqrt(lam)), which, unlike Cholesky, does
-    not fail when G is nearly singular.
+    Write G = S S^T. Then weighted_error(E, G) = ||S^T E||_F, and S^T is
+    invertible, so X_hat ranges over all rank-k matrices exactly when S^T X_hat
+    does. The best one is therefore X_hat = (S^T)^{-1} [S^T X]_k, with [.]_k
+    the truncated SVD (Eckart-Young applied to S^T X), and its weighted error
+    is sqrt(sum of the discarded sigma_i^2 of S^T X). S comes from an
+    eigendecomposition G = Q diag(lam) Q^T, S = Q diag(sqrt(lam)), so that
+    S^T = diag(sqrt(lam)) Q^T and (S^T)^{-1} = Q diag(1/sqrt(lam)).
 
-    Args:    X (out, in), k, G (in, in) symmetric positive definite (damped by the caller).
-    Returns: A (out, k), B (k, in) with X_hat = A @ B; k(out + in) numbers, as svd_truncate.
-    Source:  SVD-LLM (Wang, Zheng, Wan, Zhang, ICLR 2025), §3.1 "truncation-aware
-             data whitening": SVD of W S, truncate, multiply by S^{-1}.
-             https://github.com/AIoT-MLSys-Lab/SVD-LLM, SVDLLM.py `whitening`.
-    Differs: SVD-LLM uses a Cholesky factor of X X^T (adding to the diagonal if
-             it fails); we use the symmetric eigendecomposition. Any S with
-             S S^T = G gives the same X_hat.
+    Args:    X (m, n), k, G (m, m) symmetric positive definite.
+    Returns: A (m, k), B (k, n) with X_hat = A @ B; k(m + n) numbers, as svd_truncate.
+    Source:  SVD-LLM (Wang, Zheng, Wan, Zhang, ICLR 2025, arXiv:2403.07378),
+             §3.1 "truncation-aware data whitening", Theorem 3.2 and
+             Corollary 3.3 (Eq. 6: loss^2 = sum of truncated sigma_i^2);
+             code SVDLLM.py `whitening`, lines 219-224 at commit 7538cca:
+             SVD of W S, truncate, multiply by S^{-1}.
+    Differs: SVD-LLM's W is (out, in) with S on the right; ours has G on the
+             row index, so S^T multiplies from the left (the transpose of the
+             same construction). SVD-LLM uses a Cholesky factor of X X^T; we use
+             the symmetric eigendecomposition. Any S with S S^T = G gives the
+             same X_hat (when sigma_k > sigma_{k+1}).
     """
-    lam, Q = torch.linalg.eigh(G)                            # (in,), (in, in)
-    S = Q * torch.sqrt(lam)                                  # (in, in), S S^T = G
-    S_inv = (Q / torch.sqrt(lam)).T                          # (in, in), S^{-1} = diag(1/sqrt(lam)) Q^T
-    A, B = svd_truncate(X @ S, k)                            # (out, k), (k, in)
-    return A, B @ S_inv
+    lam, Q = torch.linalg.eigh(G)                            # (m,), (m, m)
+    St = torch.sqrt(lam)[:, None] * Q.T                      # (m, m), S^T = diag(sqrt(lam)) Q^T
+    St_inv = Q / torch.sqrt(lam)                             # (m, m), (S^T)^{-1} = Q diag(1/sqrt(lam))
+    A, B = svd_truncate(St @ X, k)                           # (m, k), (k, n)
+    return St_inv @ A, B
+
+
+def embed_rank_r(A, B):
+    """Hadamard factors that reproduce a given rank-r matrix A @ B exactly.
+
+    W1 H1 = A @ B and W2 H2 = all-ones, so (W1 H1) * (W2 H2) = A @ B.
+    The all-ones matrix is rank 1: W2 = [1, 0, ..., 0] (column of ones, then
+    zeros), H2 = the matching row of ones above zero rows. Singular values
+    are split evenly between W1 and H1 (as svd_init does).
+
+    Caution: the zero columns of W2 and zero rows of H2 receive exactly zero
+    gradient (dL/dW2[:, k] = (dL/dM2) H2[k, :]^T = 0 and vice versa), and
+    Adam turns a zero gradient into a zero step, so gradient descent from this
+    start can never use them: W2 H2 stays rank 1 and the fit stays rank r.
+
+    Args:    A (m, r), B (r, n).
+    Returns: W1 (m, r), H1 (r, n), W2 (m, r), H2 (r, n).
+    Source:  this project (REPORT stage 5.3); the rank-1 all-ones factor is the
+             identity X * 1 = X of the Hadamard product.
+    """
+    U, s, Vh = torch.linalg.svd(A @ B, full_matrices=False)  # balanced split of A @ B
+    r = A.shape[1]
+    W1 = U[:, :r] * torch.sqrt(s[:r])                        # (m, r)
+    H1 = torch.sqrt(s[:r])[:, None] * Vh[:r, :]              # (r, n)
+    W2 = torch.zeros_like(W1)
+    H2 = torch.zeros_like(H1)
+    W2[:, 0] = 1.0
+    H2[0, :] = 1.0
+    return W1, H1, W2, H2

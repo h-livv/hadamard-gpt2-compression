@@ -37,6 +37,7 @@ def damped(G):
     Adam is sensitive to, and keeps float32 well inside its range.
 
     Args:    G (in, in) float64.  Returns: (in, in) float32.
+    Source:  GPTQ's relative damping (`percdamp`); used by stages 3, 4 and 5.5.
     """
     scale = torch.mean(torch.diagonal(G))
     eye = torch.eye(G.shape[0], dtype=G.dtype, device=G.device)
@@ -44,14 +45,25 @@ def damped(G):
 
 
 def compress(X, method, r, G):
-    """Dense reconstruction of X (out, in) by one of METHODS; G (in, in) damped, float32."""
+    """Dense reconstruction of X (out, in) by "svd", "hadamard", "svd_w" or "hadamard_w"; G (in, in) damped, float32.
+
+    hadamard.py puts G on the ROW index (weighted error ||S^T E||_F), so the
+    weighted methods fit X^T, GPT-2's own (in, out) layout, and transpose back.
+    Stages 3 and 4 were run with an earlier form of this function that fitted X
+    with G on the column index: the same loss, written transposed. For the exact
+    float32 arithmetic of those runs, check out tag pre-restructure-main
+    (docs/REPORT.md, Reproduction).
+    """
     if method == "svd":
         A, B = svd_truncate(X, 2 * r)
         return A @ B
     if method == "svd_w":
-        A, B = whitened_svd(X.double(), 2 * r, G.double())  # float64: G's eigenvalues span many decades
-        return (A @ B).float()
-    W1, H1, W2, H2, hist = hadnet_fit(X, r, G=G if method == "hadamard_w" else None)
+        A, B = whitened_svd(X.T.double(), 2 * r, G.double())  # float64: G's eigenvalues span many decades
+        return (A @ B).T.float()
+    if method == "hadamard_w":
+        W1, H1, W2, H2, hist = hadnet_fit(X.T, r, G=G)
+        return reconstruct(W1, H1, W2, H2).detach().T
+    W1, H1, W2, H2, hist = hadnet_fit(X, r)
     return reconstruct(W1, H1, W2, H2).detach()
 
 
