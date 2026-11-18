@@ -81,7 +81,7 @@ def fig1_spectra():
                 label="Gaussian control, n = 256")
     ax.set_xlabel("singular value index i / n (dimensionless)")
     ax.set_ylabel("σᵢ / σ₁ (dimensionless, log scale)")
-    ax.set_title("The image spectrum falls 3–4 decades; the Gaussian control stays within one", fontsize=10)
+    ax.set_title("The image's top 10% of singular values hold 96–99% of its energy; the Gaussian control's hold 31%", fontsize=10)
     style_axes(ax)
     ax.legend(frameon=False, fontsize=8)
     save(fig, "fig1_spectra.png")
@@ -106,7 +106,7 @@ def fig2_plain_error():
     axes[0].set_ylabel("relative plain error ‖A − Â‖/‖A‖")
     axes[0].legend(frameon=False, fontsize=8)
     fig.suptitle("At equal storage SVD(2r) beats HadNet(r) on the image at every n and share; "
-                 "on the flat-spectrum control HadNet wins from 12.5% up", fontsize=11, y=1.03)
+                 "on the flat-spectrum control HadNet(r) wins at every share", fontsize=11, y=1.03)
     save(fig, "fig2_plain_error.png")
 
 
@@ -151,7 +151,7 @@ def fig4_gap_vs_kappa():
         style_axes(ax)
     axes[0].set_ylabel("weighted HadNet − whitened SVD (% of whitened SVD's error)")
     axes[0].legend(frameon=False, fontsize=8)
-    fig.suptitle("Weighted HadNet's gap to whitened SVD (paper settings) against κ",
+    fig.suptitle("Weighted HadNet (paper settings) never reaches whitened SVD: the gap is set mainly by the share, ~100% at 50%",
                  fontsize=11, y=1.03)
     save(fig, "fig4_gap_vs_kappa.png")
 
@@ -183,7 +183,7 @@ def fig5_hardest_curves():
     refs = [(rows[0]["ref_wsvd_2r"], "whitened SVD, rank 2r", "--"),
             (rows[0]["ref_hadnet"], "plain HadNet (its weighted error)", ":")]
     loss_curve_panels(rows, curves, refs,
-                      "Hardest case (n = 256, 50% share, κ = 1000): weighted HadNet's loss curves",
+                      "n = 256, 50% share, κ = 1000: every start and learning rate stays ≥ 2× above whitened SVD; the embedding never leaves rank r",
                       "fig5_loss_curves_hardest.png", "relative weighted error (dimensionless)",
                       lambda r: r["start_loss"] / r["start_rel_werr"])
 
@@ -208,8 +208,8 @@ def fig6_reconstructions():
     for ax in axes.flat:
         ax.set_xticks([])
         ax.set_yticks([])
-    fig.suptitle("n = 256, 12.5% share (r = 8): reconstructions (display clipped to [0, 1]); "
-                 "orange lines bound the region weighting's middle third", fontsize=11)
+    fig.suptitle("n = 256, 12.5% share (r = 8): whitened SVD has the lowest weighted error under both weightings "
+                 "(display clipped to [0, 1]; orange lines bound the region's middle third)", fontsize=11)
     save(fig, "fig6_reconstructions.png")
 
 
@@ -221,7 +221,7 @@ def fig7_gpt2_curves():
             (pick(rows, method="hadnet")[0]["rel_werr_Gfit"], "plain HadNet (its weighted error)", ":")]
     # rel_werr_Gfit of the best factors = best_loss / ||S^T A||, so the norm is best_loss / rel_werr_Gfit
     loss_curve_panels(wh, curves, refs,
-                      "GPT-2 block 5 c_proj, r = 128: weighted HadNet's loss curves (weighted error under G_fit)",
+                      "GPT-2 block 5 c_proj, r = 128: at lr 0.1 no start improves; at lr ≤ 0.03 the paper and warm starts beat whitened SVD",
                       "fig7_gpt2_curves.png", "relative weighted error under G_fit (dimensionless)",
                       lambda r: r["best_loss"] / r["rel_werr_Gfit"])
 
