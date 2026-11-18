@@ -219,7 +219,6 @@ def embed_rank_r(A, B):
     gradient (dL/dW2[:, k] = (dL/dM2) H2[k, :]^T = 0 and vice versa), and
     Adam turns a zero gradient into a zero step, so gradient descent from this
     start can never use them: W2 H2 stays rank 1 and the fit stays rank r.
-    `jitter` in experiments/single_image.py breaks this tie.
 
     Args:    A (m, r), B (r, n).
     Returns: W1 (m, r), H1 (r, n), W2 (m, r), H2 (r, n).

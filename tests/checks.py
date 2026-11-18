@@ -246,7 +246,7 @@ def check_weightings():
 
 def check_embedding():
     """v2 check 4. embed_rank_r reproduces the rank-r whitened SVD A_r exactly, and its zero
-    columns of W2 / zero rows of H2 get exactly zero gradient (why REPORT §5.3 adds a jittered start)."""
+    columns of W2 / zero rows of H2 get exactly zero gradient (so gradient descent from it stays at rank r)."""
     n, r = 40, 4
     A = torch.rand(n, n, dtype=torch.float64)
     G = make_G("freq100", n)

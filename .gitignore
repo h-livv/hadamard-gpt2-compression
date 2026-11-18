@@ -11,3 +11,6 @@ __pycache__/
 
 # The paper's PDF is copyrighted; do not commit a copy.
 *.pdf
+
+# Run logs
+logs/
