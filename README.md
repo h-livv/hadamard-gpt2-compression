@@ -5,7 +5,7 @@ An independent study of the method of Panchal, Sahoo and Behera, [*Tensor decomp
 **Version 2** compares four ways of compressing a single matrix at **equal storage**: truncated SVD at rank 2r, the paper's Hadamard decomposition (HadNet) at rank r, and the same two fitted to a *weighted* error ‖Sᵀ(A − Â)‖_F (whitened SVD, from SVD-LLM, and weighted HadNet, this project's extension). The main test matrix is a natural image, where every quantity can be inspected directly, alongside a random-matrix control and one GPT-2 matrix from v1.
 
 - **Report:** [`docs/REPORT.md`](docs/REPORT.md), with method, verification, results, conclusions and how to reproduce each number.
-- **Version 1** (GPT-2 small, perplexity): frozen in [`archive/v1-gpt2/`](archive/v1-gpt2/), and reproduced exactly by `git checkout v1-weight-error`.
+- **Version 1** (GPT-2 small, perplexity): frozen in [`archive/v1-gpt2/`](archive/v1-gpt2/). Its weight-error experiments are at tag `v1-weight-error`, and its activation-aware experiments at commit `9203280` (see the archive README).
 
 ## How to run it
 

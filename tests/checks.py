@@ -159,7 +159,8 @@ def check_spearman():
 def check_weighted():
     """Weighted error and whitened SVD (hadamard.weighted_error, whitened_svd), G on the row index.
 
-    (a) weighted_error(E, X^T X) = ||X E||_F computed directly; with G = I it is ||E||_F.
+    (a) weighted_error(E, X^T X) = ||X E||_F computed directly; with G = I it is ||E||_F;
+        G_side="col" on E^T (v1's (out, in) form) gives the same value.
     (b) whitened_svd with G = I is the plain truncated SVD.
     (c) whitened_svd attains the Eckart-Young bound in the weighted error: its error is
         sqrt(sum of discarded sigma_i^2 of S^T W), and it beats plain SVD in that error.
@@ -171,6 +172,7 @@ def check_weighted():
     E = torch.randn(inp, out, dtype=torch.float64)                       # (in, out)
     assert abs(weighted_error(E, G) - torch.linalg.norm(X @ E)) < 1e-9
     assert abs(weighted_error(E, torch.eye(inp, dtype=torch.float64)) - torch.linalg.norm(E)) < 1e-12
+    assert abs(weighted_error(E.T, G, G_side="col") - weighted_error(E, G)) < 1e-9   # v1's (out, in) form
 
     I = torch.eye(inp, dtype=torch.float64)
     A, B = whitened_svd(W, k, I)
