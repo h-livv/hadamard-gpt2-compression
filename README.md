@@ -15,9 +15,9 @@ Python 3.12. The image experiments run on the CPU in float64. The GPT-2 part nee
 python -m venv .venv && source .venv/bin/activate
 pip install -r requirements.txt
 
-python tests/checks.py                      # 15 checks, ~10 s; must end with "All checks passed."
-python experiments/single_image.py          # REPORT §5.1-5.4, all image fits      (~75 min)
-python experiments/gpt2_single_matrix.py    # REPORT §6, block 5 c_proj, r = 128   (~6 min)
+python tests/checks.py                      # 15 checks, ~6 s; must end with "All checks passed."
+python experiments/single_image.py          # REPORT §5.1-5.4, all image fits      (~27 min)
+python experiments/gpt2_single_matrix.py    # REPORT §5.5, block 5 c_proj, r = 128 (~3 min)
 python experiments/plot_v2.py               # figures/v2/, every figure            (~10 s)
 ```
 

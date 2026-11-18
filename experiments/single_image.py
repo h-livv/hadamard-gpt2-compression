@@ -28,7 +28,7 @@ Writes    results/conditions.csv       condition number of every G
           results/s54_diagonal.csv     5.4 metrics and the two identities' gaps
           results/curves_s5x.npz       every HadNet loss curve, key = run_id column
           results/reconstructions.npz  n = 256, 12.5% share, for figure 6
-Runtime   about 25 minutes on 8 CPU threads (laptop).
+Runtime   about 27 minutes on 8 CPU threads (laptop).
 
 Run:  python experiments/single_image.py
 """

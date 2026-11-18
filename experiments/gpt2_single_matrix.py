@@ -1,5 +1,5 @@
 """
-GPT-2 single matrix, docs/REPORT.md §6: block 5's c_proj at Hadamard rank r = 128.
+GPT-2 single matrix, docs/REPORT.md §5.5 (task §6): block 5's c_proj at Hadamard rank r = 128.
 
 What it does
     Uses v1's calibration and damping exactly: G = X^T X of the layer's inputs on
@@ -21,7 +21,7 @@ What it does
 Reads     GPT-2 small and WikiText-2 from the Hugging Face Hub (cached after first use);
           archive/v1-gpt2/results/activation_aware.csv.
 Writes    results/s6_gpt2.csv, results/s6_conditions.csv, results/curves_s6.npz
-Runtime   about 6 minutes on an RTX 4050 laptop GPU (calibration ~1 min).
+Runtime   about 3.5 minutes on an RTX 4050 laptop GPU (calibration ~1 min).
 
 Run:  python experiments/gpt2_single_matrix.py
 """
