@@ -345,7 +345,7 @@ def plot_per_matrix_errors():
 
 
 def plot_cumulative_cost(baseline):
-    """Bars: % increase in perplexity when each block is added (cumulative.py), one panel per r."""
+    """Bars: % increase in perplexity when each block is added (stage 4), one panel per r."""
     series = {}
     for row in read_rows(4, "cumulative.csv"):
         series.setdefault((row["method"], int(row["r"])), {})[int(row["last_block"])] = float(row["perplexity"])
