@@ -60,7 +60,7 @@ def reconstruct(W1, H1, W2, H2):
     return X_pred
 
 
-def weighted_error(E, G, G_side="row"):
+def weighted_error(E, G):
     """Weighted error ||S^T E||_F = sqrt(trace(E^T G E)) for E (m, n) and G = S S^T (m, m).
 
     G acts on the ROW index of E (v2 convention, docs/REPORT.md §2). In v1's
@@ -70,11 +70,6 @@ def weighted_error(E, G, G_side="row"):
     the plain Frobenius norm ||E||_F.
 
     Args:    E (m, n), G (m, m) symmetric positive semidefinite.
-             G_side "col" instead puts G (n, n) on the COLUMN index:
-             sqrt(sum(E * (E @ G))) = ||E S||_F, v1's exact formula for an
-             (out, in) matrix. Same value as the row form on E^T, but a different
-             float32 operation order; v2.1 (REPORT §10) needs it to reproduce v1's
-             HadNet fits bit for bit.
     Returns: scalar tensor (differentiable).
     Source:  the loss ||W X - W' X||_F of SVD-LLM (Wang et al., ICLR 2025,
              arXiv:2403.07378, Eq. 1), written with the Gram matrix; the trace
@@ -83,12 +78,10 @@ def weighted_error(E, G, G_side="row"):
              for the transposed matrix; changed so that images and GPT-2's
              native (in, out) layout need no transposes.
     """
-    if G_side == "col":
-        return torch.sqrt(torch.sum(E * (E @ G)))
     return torch.sqrt(torch.sum(E * (G @ E)))
 
 
-def hadnet_fit(X, r, max_epochs=2000, lr=0.1, patience=100, G=None, init=None, G_side="row"):
+def hadnet_fit(X, r, max_epochs=2000, lr=0.1, patience=100, G=None, init=None):
     """Fit the Hadamard decomposition of X with HadNet (paper §4.1, Algorithm 7).
 
     HadNet has no layers: the four factors are the trainable parameters and
@@ -107,7 +100,6 @@ def hadnet_fit(X, r, max_epochs=2000, lr=0.1, patience=100, G=None, init=None, G
              init optional (W1, H1, W2, H2) to start from instead of
              svd_init(X, r); copied, never modified. (This project's extension,
              used for the warm-start and embedding starts of REPORT §5.3.)
-             G_side passed to weighted_error ("col" = v1's (out, in) form).
     Returns: W1 (m, r), H1 (r, n), W2 (m, r), H2 (r, n), hist
              The factors are the best ones seen (lowest loss).
              hist is a list of max_epochs floats, the loss at each epoch;
@@ -139,7 +131,7 @@ def hadnet_fit(X, r, max_epochs=2000, lr=0.1, patience=100, G=None, init=None, G
         if G is None:
             loss = torch.linalg.norm(X - X_pred, "fro")      # scalar   line 9
         else:
-            loss = weighted_error(X - X_pred, G, G_side)     # scalar   line 9, activation-weighted
+            loss = weighted_error(X - X_pred, G)             # scalar   line 9, activation-weighted
         loss.backward()                                      # line 10 (backpropagate)
         hist.append(loss.item())
 

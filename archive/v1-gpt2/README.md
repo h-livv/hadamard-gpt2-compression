@@ -6,16 +6,13 @@ activation-weighted error, with WikiText-2 perplexity as the outcome.
 
 **v1 is frozen.** Nothing here is maintained, and the scripts are not runnable from this folder:
 they import `src.methods`, which now lives here as `src/methods.py`, and they write to the old
-top-level `results/` and `figures/`. To reproduce v1 exactly, check out the commit that holds the
-experiment you want, and follow that commit's `README.md`:
+top-level `results/` and `figures/`. To reproduce v1 exactly, check out the tag:
 
 ```
-git checkout v1-weight-error   # commit 3cf6c77: weight-error benchmark and diagnostics
-git checkout 9203280           # last v1 commit: adds activation_aware.py and cumulative.py
+git checkout v1-weight-error
 ```
 
-The tag `v1-weight-error` predates the activation-aware experiments (commit 45e3f17), so it does
-not contain them. v1's final README is kept here as `README_v1.md`.
+and follow that version's `README.md` (kept here as `README_v1.md`).
 
 | Path | What it was |
 |---|---|
