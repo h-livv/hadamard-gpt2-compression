@@ -191,3 +191,21 @@ def collect_gram_matrices(model, calibration_ids):
             grams[(layer, name)] = conv1d.G                      # (in, in)
             del conv1d.G
     return grams
+
+
+DAMP = 0.01   # relative damping of G, as GPTQ's `percdamp` (Frantar et al., arXiv:2210.17323)
+
+
+def damped(G):
+    """G + DAMP * mean(diag G) * I, divided by mean(diag G), in float32 (v1's G_fit, unchanged).
+
+    The damping keeps G invertible (whitened_svd divides by sqrt of its
+    eigenvalues). The division only rescales the loss, which neither SVD nor
+    Adam is sensitive to, and keeps float32 well inside its range.
+
+    Args:    G (in, in) float64.  Returns: (in, in) float32.
+    Source:  v1 src/methods.py `damped` (archive/v1-gpt2/src/methods.py), moved here unchanged.
+    """
+    scale = torch.mean(torch.diagonal(G))
+    eye = torch.eye(G.shape[0], dtype=G.dtype, device=G.device)
+    return ((G + DAMP * scale * eye) / scale).float()
