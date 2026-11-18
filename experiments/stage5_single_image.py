@@ -1,5 +1,5 @@
 """
-Single-image experiments, docs/REPORT.md §5.1-5.4.
+Stage 5, single matrices (image part): docs/REPORT.md, stage 5.1-5.4.
 
 What it does
     The image is skimage.data.astronaut() in grayscale, values in [0, 1],
@@ -20,20 +20,19 @@ What it does
            plain HadNet on DA mapped back (W1 <- D^-1 W1).
 
 Reads     nothing (the image ships with scikit-image).
-Writes    results/conditions.csv       condition number of every G
-          results/spectra.npz          singular values of every matrix
-          results/s51_spectrum.csv     5.1 metrics, bound and gain
-          results/s52_weightings.csv   5.2 metrics
-          results/s53_fix.csv          5.3 metrics (n = 256 and the n = 512 repeat)
-          results/s54_diagonal.csv     5.4 metrics and the two identities' gaps
-          results/curves_s5x.npz       every HadNet loss curve, key = run_id column
-          results/reconstructions.npz  n = 256, 12.5% share, for figure 6
+Writes    results/stage5/conditions.csv       condition number of every G
+          results/stage5/spectra.npz          singular values of every matrix
+          results/stage5/s51_spectrum.csv     5.1 metrics, bound and gain
+          results/stage5/s52_weightings.csv   5.2 metrics
+          results/stage5/s53_fix.csv          5.3 metrics (n = 256 and the n = 512 repeat)
+          results/stage5/s54_diagonal.csv     5.4 metrics and the two identities' gaps
+          results/stage5/curves_s5x.npz       every HadNet loss curve, key = run_id column
+          results/stage5/reconstructions.npz  n = 256, 12.5% share, for figure stage5/fig6
 Runtime   about 27 minutes on 8 CPU threads (laptop).
 
-Run:  python experiments/single_image.py
+Run:  python experiments/stage5_single_image.py
 """
 
-import csv
 import sys
 import time
 from pathlib import Path
@@ -46,7 +45,9 @@ from skimage import color, data, transform
 
 from src.hadamard import embed_rank_r, hadnet_fit, reconstruct, svd_truncate, whitened_svd
 from src.metrics import condition_number, psnr, relative_error, relative_weighted_error
-from src.paths import RESULTS_DIR
+from src.paths import RESULTS_DIR, write_csv
+
+OUT = RESULTS_DIR / "stage5"
 from src.weights import WEIGHTINGS, make_G
 
 # ---- settings -------------------------------------------------------------
@@ -122,14 +123,6 @@ def curve_fields(run_id, hist, curves):
     curves[run_id] = np.asarray(hist)
     return dict(run_id=run_id, steps=len(hist), best_step=int(np.argmin(hist)),
                 start_loss=hist[0], best_loss=min(hist))
-
-
-def save_csv(rows, name):
-    with open(RESULTS_DIR / name, "w", newline="") as f:
-        writer = csv.DictWriter(f, fieldnames=list(rows[0].keys()))
-        writer.writeheader()
-        writer.writerows(rows)
-    print(f"wrote results/{name} ({len(rows)} rows)", flush=True)
 
 
 # ---- 5.1 ------------------------------------------------------------------
@@ -284,34 +277,34 @@ def section_54(images, weighted_cache, curves):
 if __name__ == "__main__":
     torch.manual_seed(SEED)
     torch.set_num_threads(THREADS)
-    RESULTS_DIR.mkdir(exist_ok=True)
+    OUT.mkdir(parents=True, exist_ok=True)
     t0 = time.time()
 
     images = {n: load_image(n) for n in SIZES}
     matrices = {("image", n): A for n, A in images.items()}
     matrices[("control", CONTROL_N)] = load_control(CONTROL_N)
 
-    np.savez(RESULTS_DIR / "spectra.npz",
+    np.savez(OUT / "spectra.npz",
              **{f"{kind}_{n}": torch.linalg.svdvals(A).numpy() for (kind, n), A in matrices.items()})
-    save_csv([dict(n=n, weighting=w, cond=condition_number(make_G(w, n)))
-              for n in SIZES for w in WEIGHTINGS], "conditions.csv")
+    write_csv([dict(n=n, weighting=w, cond=condition_number(make_G(w, n)))
+              for n in SIZES for w in WEIGHTINGS], OUT / "conditions.csv")
 
     plain_cache, weighted_cache, curves, recon = {}, {}, {}, {}
-    save_csv(section_51(matrices, plain_cache, curves), "s51_spectrum.csv")
-    save_csv(section_52(images, plain_cache, weighted_cache, curves, recon), "s52_weightings.csv")
+    write_csv(section_51(matrices, plain_cache, curves), OUT / "s51_spectrum.csv")
+    write_csv(section_52(images, plain_cache, weighted_cache, curves, recon), OUT / "s52_weightings.csv")
     recon["original"] = images[RECON_N].numpy()
-    np.savez(RESULTS_DIR / "reconstructions.npz", **recon)
+    np.savez(OUT / "reconstructions.npz", **recon)
     print(f"elapsed {(time.time() - t0) / 60:.1f} min", flush=True)
 
     configs = [(init, lr) for init in FIX_INITS for lr in FIX_LRS]
     rows53 = fix_runs(images[FIX_N], FIX_N, SHARES, FIX_WEIGHTINGS, configs, plain_cache, curves, "s53")
-    save_csv(rows53, "s53_fix.csv")
+    write_csv(rows53, OUT / "s53_fix.csv")
     print(f"elapsed {(time.time() - t0) / 60:.1f} min", flush=True)
     # Optional part of 5.3: the best two of the nine configurations at n = 512.
     rows53 += fix_runs(images[REPEAT_N], REPEAT_N, SHARES, FIX_WEIGHTINGS, best_two(rows53),
                        plain_cache, curves, "s53")
-    save_csv(rows53, "s53_fix.csv")
+    write_csv(rows53, OUT / "s53_fix.csv")
 
-    save_csv(section_54(images, weighted_cache, curves), "s54_diagonal.csv")
-    np.savez_compressed(RESULTS_DIR / "curves_s5x.npz", **curves)
+    write_csv(section_54(images, weighted_cache, curves), OUT / "s54_diagonal.csv")
+    np.savez_compressed(OUT / "curves_s5x.npz", **curves)
     print(f"done in {(time.time() - t0) / 60:.1f} min")

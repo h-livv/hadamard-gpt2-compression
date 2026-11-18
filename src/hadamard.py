@@ -63,8 +63,8 @@ def reconstruct(W1, H1, W2, H2):
 def weighted_error(E, G):
     """Weighted error ||S^T E||_F = sqrt(trace(E^T G E)) for E (m, n) and G = S S^T (m, m).
 
-    G acts on the ROW index of E (v2 convention, docs/REPORT.md §2). In v1's
-    GPT-2 layout W (in, out) with layer inputs X (tokens, in), G = X^T X and
+    G acts on the ROW index of E (docs/REPORT.md, Background). In GPT-2's
+    layout W (in, out) with layer inputs X (tokens, in), G = X^T X and
         ||X E||_F^2 = trace(E^T X^T X E) = trace(E^T G E) = sum(E * (G @ E)),
     i.e. the error of the layer's output on those inputs. With G = I this is
     the plain Frobenius norm ||E||_F.
@@ -74,9 +74,9 @@ def weighted_error(E, G):
     Source:  the loss ||W X - W' X||_F of SVD-LLM (Wang et al., ICLR 2025,
              arXiv:2403.07378, Eq. 1), written with the Gram matrix; the trace
              identity is SVD-LLM's Lemma 3.1 (Eq. 2). Checked in tests/checks.py.
-    Differs: v1 put G on the column index of an (out, in) matrix. Same quantity
-             for the transposed matrix; changed so that images and GPT-2's
-             native (in, out) layout need no transposes.
+    Differs: stages 3 and 4 were run with G on the column index of an (out, in)
+             matrix. Same quantity for the transposed matrix; the row form lets
+             images and GPT-2's native (in, out) layout be used without transposes.
     """
     return torch.sqrt(torch.sum(E * (G @ E)))
 
@@ -99,7 +99,7 @@ def hadnet_fit(X, r, max_epochs=2000, lr=0.1, patience=100, G=None, init=None):
              extension, not in the paper.)
              init optional (W1, H1, W2, H2) to start from instead of
              svd_init(X, r); copied, never modified. (This project's extension,
-             used for the warm-start and embedding starts of REPORT §5.3.)
+             used for the warm-start and embedding starts of REPORT stage 5.3.)
     Returns: W1 (m, r), H1 (r, n), W2 (m, r), H2 (r, n), hist
              The factors are the best ones seen (lowest loss).
              hist is a list of max_epochs floats, the loss at each epoch;
@@ -222,7 +222,7 @@ def embed_rank_r(A, B):
 
     Args:    A (m, r), B (r, n).
     Returns: W1 (m, r), H1 (r, n), W2 (m, r), H2 (r, n).
-    Source:  this project (REPORT §5.3); the rank-1 all-ones factor is the
+    Source:  this project (REPORT stage 5.3); the rank-1 all-ones factor is the
              identity X * 1 = X of the Hadamard product.
     """
     U, s, Vh = torch.linalg.svd(A @ B, full_matrices=False)  # balanced split of A @ B

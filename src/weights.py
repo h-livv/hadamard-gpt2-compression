@@ -1,5 +1,5 @@
 """
-The weightings G of the single-matrix experiments (docs/REPORT.md §2).
+The weightings G of the stage 5 single-image experiments (docs/REPORT.md, stage 5).
 
 Every G is (n, n), symmetric positive definite, acts on the ROW index of the
 image (weighted error ||S^T E||_F = sqrt(trace(E^T G E)), G = S S^T), and is
@@ -11,7 +11,7 @@ normalised so that mean(diag G) = 1. All in float64.
     freq{kappa}         G = C^T diag(w) C, C the orthonormal condition number kappa
                         DCT-II, w_k = kappa^(-k/(n-1))
 
-Source: the task specification for v2 (this project's design). The DCT matrix
+Source: this project's design. The DCT matrix
 is scipy.fft.dct(np.eye(n), norm="ortho", axis=0),
 https://docs.scipy.org/doc/scipy/reference/generated/scipy.fft.dct.html
 """

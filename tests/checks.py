@@ -2,12 +2,12 @@
 Correctness checks for src/hadamard.py, src/metrics.py and src/weights.py.
 Run:  python tests/checks.py   (CPU, about a minute)
 
-Checks 1-9 are v1's (check 9 rewritten for v2's row convention of G).
-Checks 10-15 are v2's (task section 7, numbered 1-6 there).
+Checks 1-9 cover the library used by every stage (checks 7-9 the weighted
+error of stages 2-5). Checks 10-15 cover the weighted fitting of stage 5.
 Exact identities use float64 and assert. Check 6 runs the real optimiser with
 the paper's settings in float32.
-"paper" as in hadamard.py. "README §M1..M4" are the short derivations in the
-README section "Maths behind the checks".
+"paper" as in hadamard.py. "M1..M4" are the short derivations in
+docs/REPORT.md, section "Background".
 """
 
 import torch
@@ -35,7 +35,7 @@ def random_factors(m, n, r):
 
 
 def check_khatri_rao():
-    """(W1 H1) * (W2 H2) = E @ F, with E, F the Khatri-Rao products (README §M1).
+    """(W1 H1) * (W2 H2) = E @ F, with E, F the Khatri-Rao products (REPORT, Background M1).
 
     This identity is why the rank can reach r^2 (paper Prop. 3.3).
     """
@@ -71,7 +71,7 @@ def check_svd_init_exact():
 
 
 def check_eckart_young():
-    """Truncated-SVD error = sqrt(sum of discarded sigma_i^2) (README §M2; paper Thm 3.1, one slice)."""
+    """Truncated-SVD error = sqrt(sum of discarded sigma_i^2) (REPORT, Background M2; paper Thm 3.1, one slice)."""
     m, n, k = 12, 9, 4
     X = torch.randn(m, n, dtype=torch.float64)               # (m, n)
     A, B = svd_truncate(X, k)                                # (m, k), (k, n)
@@ -83,7 +83,7 @@ def check_eckart_young():
 
 
 def check_param_count():
-    """Hadamard at rank r and SVD at rank 2r both store 2r(m+n) numbers (README §M3)."""
+    """Hadamard at rank r and SVD at rank 2r both store 2r(m+n) numbers (REPORT, Background M3)."""
     m, n, r = 30, 50, 4
     X = torch.randn(m, n, dtype=torch.float64)               # (m, n)
     hadamard_count = sum(f.numel() for f in svd_init(X, r))
@@ -105,7 +105,7 @@ def compare_on(X, r):
 def check_spectrum_dependence():
     """Hadamard wins on a flat spectrum; SVD is expected to win on a fast-decaying one.
 
-    README §M4 (reading of paper Prop. 3.5): the gain over SVD(2r) is at
+    REPORT, Background M4 (reading of paper Prop. 3.5): the gain over SVD(2r) is at
     most sum_{i=2r+1}^{r^2} sigma_i^2, which is large for a flat spectrum and
     small for a fast-decaying one.
     """
@@ -187,10 +187,10 @@ def check_weighted():
     print(f"9. Weighted error identity; whitened SVD at Eckart-Young bound ({err_white:.4f} <= plain {err_plain:.4f}) ... OK")
 
 
-# ---- v2 checks (task section 7) ---------------------------------------------
+# ---- weighted fitting (stage 5) ---------------------------------------------
 
 def check_identity_weighting():
-    """v2 check 1. With G = I: whitened SVD = SVD, weighted loss = plain loss, and
+    """With G = I: whitened SVD = SVD, weighted loss = plain loss, and
     weighted HadNet follows plain HadNet's loss curve (same start, same loss)."""
     n, k, r = 32, 6, 3
     A = torch.rand(n, n, dtype=torch.float64)
@@ -209,7 +209,7 @@ def check_identity_weighting():
 
 
 def check_diagonal_identities():
-    """v2 check 2 (REPORT §5.4). For diagonal G = D^2:
+    """For diagonal G = D^2 (REPORT, stage 5.4):
     (a) ||D(A - (W1 H1)*(W2 H2))||_F = ||DA - ((D W1) H1)*(W2 H2)||_F, from D(X * Y) = (DX) * Y;
     (b) whitened_svd(A, k, D^2) = D^{-1} [DA]_k."""
     n, r, k = 24, 3, 5
@@ -228,7 +228,7 @@ def check_diagonal_identities():
 
 
 def check_weightings():
-    """v2 check 3. Every weighting is symmetric positive definite with mean(diag G) = 1;
+    """Every weighting is symmetric positive definite with mean(diag G) = 1;
     freq{kappa} has condition number kappa (to 1e-6 relative), region 100, identity 1."""
     worst = 0.0
     for n in [64, 128, 256, 512]:
@@ -245,7 +245,7 @@ def check_weightings():
 
 
 def check_embedding():
-    """v2 check 4. embed_rank_r reproduces the rank-r whitened SVD A_r exactly, and its zero
+    """embed_rank_r reproduces the rank-r whitened SVD A_r exactly, and its zero
     columns of W2 / zero rows of H2 get exactly zero gradient (so gradient descent from it stays at rank r)."""
     n, r = 40, 4
     A = torch.rand(n, n, dtype=torch.float64)
@@ -263,7 +263,7 @@ def check_embedding():
 
 
 def check_warm_start():
-    """v2 check 5. Weighted HadNet warm-started from plain HadNet's factors never ends above
+    """Weighted HadNet warm-started from plain HadNet's factors never ends above
     its starting weighted loss (best-seen tracking), here with lr 0.1 on the worst-conditioned G."""
     n, r = 48, 4
     A = torch.rand(n, n, dtype=torch.float64)
@@ -277,7 +277,7 @@ def check_warm_start():
 
 
 def check_whitened_eckart_young():
-    """v2 check 6. On a small case, whitened SVD's weighted error equals the Eckart-Young error
+    """On a small case, whitened SVD's weighted error equals the Eckart-Young error
     of S^T A (sqrt of the discarded sigma_i^2), and no random rank-k matrix does better."""
     n, k = 16, 3
     A = torch.rand(n, n, dtype=torch.float64)

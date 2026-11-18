@@ -1,9 +1,9 @@
 """
-Activation-aware fitting, with blocks 0 and 1 left uncompressed.
+Stage 3, activation-aware fits, with blocks 0 and 1 left uncompressed.
 
-Two changes from compress_gpt2.py / diagnostics.py, suggested by their results (docs/RESULTS.md):
+Two changes from stages 1 and 2, suggested by their results (docs/REPORT.md):
   1. Blocks 0 and 1 are not compressed (they caused the six worst single-matrix
-     runs in diagnostics.csv). Only the 20 MLP matrices of blocks 2-11 are.
+     runs in stage 2). Only the 20 MLP matrices of blocks 2-11 are.
   2. Besides the plain weight-error fits, each method is also fitted to the
      activation-weighted error ||X (W - W_hat)||_F on calibration inputs X,
      as SVD-LLM and ASVD do for SVD:
@@ -16,12 +16,16 @@ All four store 2r(m+n) numbers per compressed matrix. For each (method, r) the
 matrix is evaluated on its own.
 
 The Gram matrices G = X^T X come from the ORIGINAL model on 64 x 512 tokens of
-the WikiText-2 TRAIN split (diagnostics.load_calibration_tokens); perplexity is
+the WikiText-2 TRAIN split (src/gpt2.py, load_calibration_tokens); perplexity is
 on the TEST split. Before fitting, G is damped: G + DAMP * mean(diag G) * I.
 
-Run:  python experiments/activation_aware.py      (writes results/activation_aware.csv)
+Reads     GPT-2 small and WikiText-2 from the Hugging Face Hub (cached after first use).
+Writes    results/stage3/activation_aware.csv  one row per (method, r, matrix)
+Runtime   about 35 minutes on an RTX 4050 laptop GPU.
 If that CSV already exists, the (method, r) runs it contains are
 skipped, so an interrupted run can be resumed. Delete it to start afresh.
+
+Run:  python experiments/stage3_activation_aware.py
 """
 
 import csv
@@ -41,22 +45,14 @@ from src.gpt2 import (DEVICE, MATRICES, SEED, collect_gram_matrices, get_weight,
                                      load_calibration_tokens, load_test_tokens, perplexity, set_weight)
 from src.methods import compress, damped
 from src.metrics import output_error, relative_error
-from src.paths import RESULTS_DIR
+from src.paths import RESULTS_DIR, write_csv
 
 # ---- settings -------------------------------------------------------------
 RANKS = [64, 128, 256]                              # Hadamard rank r; SVD rank 2r
 METHODS = ["svd", "hadamard", "svd_w", "hadamard_w"]
 COMPRESSED_LAYERS = range(2, 12)                    # blocks 0 and 1 stay uncompressed
-OUT = RESULTS_DIR / "activation_aware.csv"
+OUT = RESULTS_DIR / "stage3" / "activation_aware.csv"
 # ---------------------------------------------------------------------------
-
-
-def save_rows(rows):
-    """Write all rows collected so far to OUT (rewritten after every run)."""
-    with open(OUT, "w", newline="") as f:
-        writer = csv.DictWriter(f, fieldnames=list(rows[0].keys()))
-        writer.writeheader()
-        writer.writerows(rows)
 
 
 if __name__ == "__main__":
@@ -107,7 +103,7 @@ if __name__ == "__main__":
             for row in new_rows:
                 row["perplexity"] = ppl                                        # same on all 20 rows
             rows.extend(new_rows)
-            save_rows(rows)
+            write_csv(rows, OUT)
             print(f"{method:10s} r={r:3d}  perplexity {ppl:10.2f}  "
                   f"mean weight error {np.mean([x['weight_error'] for x in new_rows]):.4f}  "
                   f"mean output error {np.mean([x['output_error'] for x in new_rows]):.4f}  "

@@ -1,5 +1,5 @@
 """
-How damage accumulates: compress blocks 2, 3, ..., 11 one after another and
+Stage 4, cumulative damage: compress blocks 2, 3, ..., 11 one after another and
 measure perplexity after each block is added.
 
 For each (method, r), the model starts uncompressed. Then block 2's two MLP
@@ -7,15 +7,19 @@ matrices are compressed and perplexity is measured; then block 3's are
 compressed as well (block 2 stays compressed) and perplexity is measured
 again; and so on until blocks 2-11 are all compressed. Blocks 0 and 1 are
 never compressed. The last step is the same configuration as one run of
-activation_aware.py, so its perplexity should match that run's.
+stage 3, so its perplexity should match that run's.
 
-Methods are the two activation-weighted ones from activation_aware.py:
+Methods are the two activation-weighted ones from stage 3:
     "svd_w"       whitened SVD at rank 2r (SVD-LLM)
     "hadamard_w"  HadNet at rank r with the activation-weighted loss
 Each matrix is fitted once, with Gram matrices from the ORIGINAL model (as in
-activation_aware.py), so later blocks do not see the errors of earlier ones.
+stage 3), so later blocks do not see the errors of earlier ones.
 
-Run:  python experiments/cumulative.py      (writes results/cumulative.csv; resumes like activation_aware.py)
+Reads     GPT-2 small and WikiText-2 from the Hugging Face Hub (cached after first use).
+Writes    results/stage4/cumulative.csv  one row per (method, r, block added); resumes like stage 3
+Runtime   about 50 minutes on an RTX 4050 laptop GPU.
+
+Run:  python experiments/stage4_cumulative.py
 """
 
 import csv
@@ -34,22 +38,14 @@ from src.gpt2 import (DEVICE, MATRICES, SEED, collect_gram_matrices, get_weight,
                                      load_calibration_tokens, load_test_tokens, perplexity, set_weight)
 from src.methods import compress, damped
 from src.metrics import output_error, relative_error
-from src.paths import RESULTS_DIR
+from src.paths import RESULTS_DIR, write_csv
 
 # ---- settings -------------------------------------------------------------
 RANKS = [64, 128, 256]
 METHODS = ["svd_w", "hadamard_w"]
-COMPRESSED_LAYERS = range(2, 12)    # as in activation_aware.py: blocks 0 and 1 stay uncompressed
-OUT = RESULTS_DIR / "cumulative.csv"
+COMPRESSED_LAYERS = range(2, 12)    # as in stage 3: blocks 0 and 1 stay uncompressed
+OUT = RESULTS_DIR / "stage4" / "cumulative.csv"
 # ---------------------------------------------------------------------------
-
-
-def save_rows(rows):
-    """Write all rows collected so far to OUT (rewritten after every step)."""
-    with open(OUT, "w", newline="") as f:
-        writer = csv.DictWriter(f, fieldnames=list(rows[0].keys()))
-        writer.writeheader()
-        writer.writerows(rows)
 
 
 if __name__ == "__main__":
@@ -96,7 +92,7 @@ if __name__ == "__main__":
                     c_fc_weight_error=weight_errors[0], c_proj_weight_error=weight_errors[1],
                     c_fc_output_error=output_errors[0], c_proj_output_error=output_errors[1],
                     perplexity=ppl, increase_from_previous=ppl - previous, fit_seconds=seconds))
-                save_rows(rows)
+                write_csv(rows, OUT)
                 print(f"{method:10s} r={r:3d}  blocks 2..{layer:2d} compressed: perplexity {ppl:9.2f} "
                       f"(+{ppl - previous:8.2f})", flush=True)
                 previous = ppl

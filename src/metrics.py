@@ -2,7 +2,7 @@
 Error measures and statistics used to compare an approximation W_hat with W.
 
 Pure functions of tensors and arrays; nothing here knows about GPT-2.
-v2 adds relative_weighted_error, psnr and condition_number.
+relative_weighted_error, psnr and condition_number serve stage 5.
 """
 
 import numpy as np
