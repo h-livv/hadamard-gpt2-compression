@@ -1,48 +1,36 @@
-# Weighted Hadamard decomposition on single matrices (v2)
+# Hadamard decomposition against truncated SVD, at equal storage
 
-An independent study of the method of Panchal, Sahoo and Behera, [*Tensor decomposition and neural architectures through generalized Hadamard products*](https://doi.org/10.1016/j.neucom.2026.134372), Neurocomputing 699 (2026) 134372. Not affiliated with the authors.
+At equal storage, is the Hadamard decomposition of Panchal, Sahoo and Behera ([*Neurocomputing* 699 (2026) 134372](https://doi.org/10.1016/j.neucom.2026.134372)) a better way to compress a weight matrix than truncated SVD, and what decides the answer? An independent study, not affiliated with the authors. The full write-up is [`docs/REPORT.md`](docs/REPORT.md).
 
-**Version 2** compares four ways of compressing a single matrix at **equal storage**: truncated SVD at rank 2r, the paper's Hadamard decomposition (HadNet) at rank r, and the same two fitted to a *weighted* error ‖Sᵀ(A − Â)‖_F (whitened SVD, from SVD-LLM, and weighted HadNet, this project's extension). The main test matrix is a natural image, where every quantity can be inspected directly, alongside a random-matrix control and one GPT-2 matrix from v1.
+Hadamard at rank r stores 2r(m + n) numbers, as SVD does at rank 2r, so every comparison here pits HadNet(r) against SVD(2r). GPT-2 small scores a WikiText-2 perplexity of 25.17 uncompressed.
 
-- **Report:** [`docs/REPORT.md`](docs/REPORT.md), with method, verification, results, conclusions and how to reproduce each number.
-- **Version 1** (GPT-2 small, perplexity): frozen in [`archive/v1-gpt2/`](archive/v1-gpt2/), and reproduced exactly by `git checkout v1-weight-error`.
+| Stage | What was done | What it found | Why it leads on |
+|---|---|---|---|
+| 1. Plain fits on GPT-2 | All 24 MLP matrices, SVD(2r) vs HadNet(r), weight-error fits, r = 8–64 | HadNet has the lower weight error on 85 of 96 fits, but every model is broken (perplexity 3,904–25,286), and HadNet loses at r = 32 and 64 | Why doesn't the better weight approximation give a better model? |
+| 2. Diagnostics | Bug check, r up to 256, one matrix at a time, error statistics, output error | No bug. From r = 128 up HadNet's models are far better (45.2 vs 1,399 at r = 256). The six worst single-matrix runs are all in blocks 0–1. Neither error predicts one matrix's damage | So fit the error on real inputs, and protect blocks 0–1 |
+| 3. Activation-aware fits | Blocks 2–11, SVD, HadNet, whitened SVD, weighted HadNet, r = 64–256 | The largest improvement (2–12×). Weighted HadNet wins at r = 64 (90.0 vs 252.2); whitened SVD at r = 128 and 256 (59.1, 29.3), where weighted HadNet's `c_proj` fits barely move. Output error predicts perplexity (Spearman +0.97) | Where does the damage come from, block by block? |
+| 4. Cumulative damage | Blocks 2–11 added one at a time | Each block multiplies perplexity (×1.009–1.818). Blocks 3–8 cause 62–85% of the log increase, following `c_proj` output error (Spearman +0.78) | Is the `c_proj` failure the method or the optimiser? Isolate single matrices |
+| 5. Single matrices | An image at n = 64–512 and four storage shares under three weightings, a random control, GPT-2 block 5 `c_proj` | The spectrum decides SVD vs HadNet (Prop 3.5): SVD wins on the image everywhere, HadNet on the flat control everywhere. On block 5 `c_proj`, the failure was the learning rate: at 0.03 or 0.01 weighted HadNet beats whitened SVD by 24–26% | Open questions (report) |
 
-## How to run it
+*Stage 2 originally read "output error, not weight error, tracks the damage when many matrices are compressed". Across stage 2's eight all-matrix runs both errors track it (Spearman +0.95 for weight error, +0.90 for output error); output error separates from weight error only in stage 3. The table follows the data.*
 
-Python 3.12. The image experiments run on the CPU in float64. The GPT-2 part needs about 6 GB of GPU memory, and downloads GPT-2 small and WikiText-2 from the Hugging Face Hub on first use. Times are for a laptop (8 CPU threads, RTX 4050).
+![Perplexity against model size, the four fits of stage 3](figures/stage3/perplexity_vs_model_size_blocks2-11.png)
+
+## Install and run
+
+Python 3.12. Stages 1–4 and the GPT-2 part of stage 5 need a CUDA GPU with about 6 GB, and download GPT-2 small and WikiText-2 from the Hugging Face Hub on first use.
 
 ```
 python -m venv .venv && source .venv/bin/activate
 pip install -r requirements.txt
-
-python tests/checks.py                      # 15 checks, ~6 s; must end with "All checks passed."
-python experiments/single_image.py          # REPORT §5.1-5.4, all image fits      (~27 min)
-python experiments/gpt2_single_matrix.py    # REPORT §5.5, block 5 c_proj, r = 128 (~3 min)
-python experiments/plot_v2.py               # figures/v2/, every figure            (~10 s)
+python tests/checks.py                          # 16 checks, ~6 s; must end with "All checks passed."
+python experiments/stage1_plain_fits.py         # ~11 min
+python experiments/stage2_diagnostics.py        # ~75 min
+python experiments/stage3_activation_aware.py   # ~35 min
+python experiments/stage4_cumulative.py         # ~50 min
+python experiments/stage5_single_image.py       # ~27 min (CPU)
+python experiments/stage5_gpt2_single_matrix.py # ~3.5 min
+python experiments/plot.py                      # every figure
 ```
 
-Settings are constants at the top of each script. Every number in the report comes from a CSV in `results/`.
-
-## Layout
-
-```
-src/
-  hadamard.py   the methods: SVD init (paper §3.3), HadNet (Algorithm 7, optional weighted loss and start),
-                truncated SVD, whitened SVD (SVD-LLM), rank-r embedding
-  weights.py    the weightings G: identity, diagonal region, DCT frequency with condition number κ
-  metrics.py    relative plain and weighted error, PSNR, condition number (plus v1's measures)
-  gpt2.py       GPT-2 weights, calibration Gram matrices, damping (v1 code)
-  paths.py      locations of results/ and figures/
-experiments/    single_image.py, gpt2_single_matrix.py, plot_v2.py
-tests/          checks.py
-results/        one CSV per experiment, loss curves (.npz), spectra, reconstructions
-figures/v2/     the seven figures of the report
-docs/           REPORT.md
-archive/v1-gpt2/  version 1, frozen
-```
-
-## Sources
-
-- **Method:** Panchal, Sahoo, Behera, Neurocomputing 699 (2026) 134372, <https://doi.org/10.1016/j.neucom.2026.134372>; code <https://github.com/PanchalAneesh/HadNet-HadDNN>. `src/hadamard.py` re-implements the single-matrix case; no file is copied.
-- **Whitened SVD:** SVD-LLM (Wang, Zheng, Wan, Zhang, ICLR 2025), <https://arxiv.org/abs/2403.07378>; code <https://github.com/AIoT-MLSys-Lab/SVD-LLM>.
-- **Image:** `skimage.data.astronaut()`, a public-domain NASA photograph shipped with scikit-image.
+Each script writes to `results/stageN/`, and `plot.py` writes to `figures/stageN/`. The shared code is in `src/`, and every check is in `tests/checks.py`.

@@ -4,6 +4,7 @@ Run:  python tests/checks.py   (CPU, about a minute)
 
 Checks 1-9 cover the library used by every stage (checks 7-9 the weighted
 error of stages 2-5). Checks 10-15 cover the weighted fitting of stage 5.
+Check 16 re-reads the numbers in the appendix of docs/REPORT.md from results/.
 Exact identities use float64 and assert. Check 6 runs the real optimiser with
 the paper's settings in float32.
 "paper" as in hadamard.py. "M1..M4" are the short derivations in
@@ -295,6 +296,31 @@ def check_whitened_eckart_young():
           f"matrices all worse (best {others:.6f}) ... OK")
 
 
+def check_report_numbers():
+    """Every number in the appendix table of docs/REPORT.md equals its CSV cell, to the digits shown.
+
+    Each appendix row names a file, a row (key=value pairs) and a column. The
+    value printed in the report must equal the file's value formatted with the
+    same number of decimals.
+    """
+    import csv
+    import re
+    from src.paths import ROOT
+    text = (ROOT / "docs" / "REPORT.md").read_text()
+    appendix = text[text.index("## Appendix"):]
+    rows = re.findall(r"^\| (\d+) \| ([-0-9.]+) \| (results/\S+) \| (.+?) \| (\w+) \|$", appendix, re.M)
+    assert len(rows) >= 20, len(rows)
+    for number, value, path, where, column in rows:
+        keys = dict(pair.split("=") for pair in where.split("; "))
+        with open(ROOT / path, newline="") as f:
+            matches = [row for row in csv.DictReader(f) if all(row[k] == v for k, v in keys.items())]
+        assert matches, (number, path, where)
+        decimals = len(value.split(".")[1]) if "." in value else 0
+        got = f"{float(matches[0][column]):.{decimals}f}"
+        assert got == value, (number, value, got)
+    print(f"16. Report appendix: {len(rows)} numbers re-read from results/ ... OK")
+
+
 if __name__ == "__main__":
     check_khatri_rao()
     check_rank_bound()
@@ -311,4 +337,5 @@ if __name__ == "__main__":
     check_embedding()
     check_warm_start()
     check_whitened_eckart_young()
+    check_report_numbers()
     print("All checks passed.")

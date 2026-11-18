@@ -1,8 +1,8 @@
 # Python 3.12. Versions used for the reported results are in the comments.
-torch         # 2.15.0 (CUDA build; image experiments run on CPU in float64)
-transformers  # 5.23.0  (GPT-2 part only)
-datasets      # 5.2.0   (GPT-2 part only)
+torch         # 2.15.0 (CUDA build; stage 5 image fits run on CPU in float64)
+transformers  # 5.23.0  (stages 1-4 and 5.5)
+datasets      # 5.2.0   (stages 1-4 and 5.5)
 numpy         # 2.5.4
-scipy         # 1.18.1  (DCT matrix)
-scikit-image  # 0.26.0  (astronaut image, resize)
+scipy         # 1.18.1  (stage 5 DCT matrix)
+scikit-image  # 0.26.0  (stage 5 astronaut image, resize)
 matplotlib    # 3.11.2
